@@ -1,0 +1,47 @@
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
+from app.database.base import Base
+
+
+class LocationHistory(Base):
+    """
+    Immutable append-only log of all location updates.
+    Written on every GPS ping and every manual update.
+    Never updated or deleted — only inserted and queried.
+    """
+
+    __tablename__ = "location_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    location_id = Column(
+        Integer,
+        ForeignKey("user_locations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Snapshot of coordinates at time of update
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    accuracy = Column(Float, nullable=True)
+    altitude = Column(Float, nullable=True)
+    speed = Column(Float, nullable=True)
+
+    # 'gps' or 'manual'
+    source = Column(String(10), nullable=False)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True,
+    )
+
+    # Relationship to UserLocation only (User relationship removed to avoid lazy-load issues)
+    location_record = relationship("UserLocation", back_populates="history_entries")
