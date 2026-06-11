@@ -1,9 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
-
 from app.api.v1 import api_router
 from app.core.redis import close_redis, initialise_redis
 
@@ -65,7 +63,7 @@ def custom_openapi():
     schema["components"]["securitySchemes"] = {
         "BearerAuth": {
             "type": "http",
-            "scheme": "bearer",
+            "scheme": "bearer Token",
             "bearerFormat": "JWT",
             "description": "Enter the JWT token from POST /api/v1/auth/login",
         }
