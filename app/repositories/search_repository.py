@@ -60,7 +60,7 @@ class SearchRepository:
             longitude=longitude,
             radius=radius,
             result_count=result_count,
-            from_cache="true" if from_cache else "false",
+            from_cache=from_cache,  # B21: direct bool, no "true"/"false" string
         )
         self.db.add(record)
         self.db.flush()   # assigns .id without committing

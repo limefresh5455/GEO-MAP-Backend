@@ -1,11 +1,32 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: geo_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: geomap_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - geo_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d geomap_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   redis:
     image: redis:7-alpine
     container_name: geo_redis
     restart: unless-stopped
     ports:
-      - "6380:6379"            # host:6380 → container:6379 (avoids port conflicts)
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+      - "6379:6379"            # Standard Redis port (no conflict)
+    # B-068 FIX: Increased maxmemory from 256mb to 512mb and changed eviction policy
+    # to volatile-lru (only evict keys with TTL) to protect long-lived place details cache
+    command: redis-server --maxmemory 512mb --maxmemory-policy volatile-lru
     volumes:
       - redis_data:/data
     networks:
@@ -66,11 +87,15 @@ services:
       - .env.docker
     networks:
       - geo_network
+    # B-067 FIX: API must wait for both DB and Redis to be healthy
     depends_on:
+      db:
+        condition: service_healthy
       redis:
         condition: service_healthy
 
 volumes:
+  postgres_data:
   redis_data:
   redis_insight_data:
 

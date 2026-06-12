@@ -21,7 +21,7 @@ class DuplicateLocationError(HTTPException):
     def __init__(self):
         super().__init__(
             status_code=status.HTTP_200_OK,
-            detail="Location unchanged — duplicate update skipped",
+            detail="Location unchanged duplicate update skipped",
         )
 
 

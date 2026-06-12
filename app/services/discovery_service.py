@@ -55,6 +55,8 @@ from app.schemas.discovery import (
     DiscoveryPlaceResult,
     DiscoverySearchRequest,
     NearbyDiscoveryRequest,
+    NearbyRankPreference,
+    RankPreference,
     TextSearchRequest,
 )
 
@@ -89,10 +91,13 @@ def _build_text_cache_key(
     how long the query string is.  The user_id prefix prevents cross-user
     cache collision (different users may have different saved locations).
 
+    Coordinates are rounded to 4 decimal places (~11m precision) to prevent
+    GPS noise from creating unnecessary cache misses.
+
     Format: text_search:{user_id}:{sha256_hex[:16]}
     """
-    lat_str = f"{round(bias_lat, 6)}" if bias_lat is not None else "none"
-    lon_str = f"{round(bias_lon, 6)}" if bias_lon is not None else "none"
+    lat_str = f"{round(bias_lat, 4)}" if bias_lat is not None else "none"
+    lon_str = f"{round(bias_lon, 4)}" if bias_lon is not None else "none"
     raw = (
         f"{text_query.lower().strip()}|{lat_str}|{lon_str}"
         f"|{max_result_count}|{open_now}|{min_rating}|{rank_preference}"
@@ -111,9 +116,12 @@ def _build_nearby_cache_key(
     """
     Nearby cache key — identical format to the existing nearby-search key
     so they share the same TTL strategy.
+    
+    Coordinates rounded to 4 decimal places (~11m precision) to reduce
+    cache misses from GPS noise.
     """
-    lat = round(latitude, 6)
-    lon = round(longitude, 6)
+    lat = round(latitude, 4)
+    lon = round(longitude, 4)
     return f"nearby:{user_id}:{lat}:{lon}:{radius}:{max_result_count}"
 
 
@@ -135,6 +143,9 @@ class DiscoveryService:
         self.text_client = text_client
         self.nearby_client = nearby_client
         self.search_repo = SearchRepository(db)
+        # Explicit TTL for search result caches (1 hour by default)
+        from app.core.config import settings
+        self._search_cache_ttl = settings.REDIS_CACHE_TTL
 
     # ------------------------------------------------------------------
     # Internal: resolve user's current location from DB
@@ -176,8 +187,10 @@ class DiscoveryService:
     ) -> None:
         """Persist places to Redis.  Never raises."""
         try:
+            # Use explicit TTL if provided, otherwise use search cache TTL
+            cache_ttl = ttl if ttl is not None else self._search_cache_ttl
             serialisable = [p.model_dump() for p in places]
-            await self.redis_repo.set(key, serialisable, ttl=ttl)
+            await self.redis_repo.set(key, serialisable, ttl=cache_ttl)
         except Exception as exc:
             logger.warning("Cache write failed for key %s: %s", key, exc)
 
@@ -222,9 +235,12 @@ class DiscoveryService:
             )
             self.db.commit()
         except Exception as exc:
-            logger.error(
-                "Audit persist failed (user=%s mode=%s query=%r): %s",
-                user_id, search_mode, raw_query, exc,
+            # B045 FIX: Changed from logger.error to logger.critical for audit failures.
+            # Audit trail is critical for compliance, debugging, and billing analysis.
+            # Silent failures here mean lost data for important business metrics.
+            logger.critical(
+                "AUDIT PERSIST FAILED — search data lost (user=%s mode=%s query=%r): %s",
+                user_id, search_mode, raw_query, exc, exc_info=True
             )
             self.db.rollback()
 
@@ -408,6 +424,9 @@ class DiscoveryService:
             longitude=longitude,
             radius=request.radius,
             max_result_count=request.max_result_count,
+            rank_preference=(
+                request.rank_preference.value if request.rank_preference else None
+            ),
         )
 
         places: List[DiscoveryPlaceResult] = [
@@ -479,21 +498,32 @@ class DiscoveryService:
         )
 
         if mode == "text":
+            text_rank_preference = (
+                request.rank_preference
+                if isinstance(request.rank_preference, RankPreference)
+                else None
+            )
             text_req = TextSearchRequest(
                 text_query=request.query,  # type: ignore[arg-type]
                 max_result_count=request.max_result_count,
                 open_now=request.open_now,
                 min_rating=request.min_rating,
-                rank_preference=request.rank_preference,
+                rank_preference=text_rank_preference,
                 use_user_location_as_bias=True,
             )
             places, from_cache, lat, lon = await self.text_search(text_req, user_id)
             return places, from_cache, "text", lat, lon
 
         else:  # nearby
+            nearby_rank_preference = (
+                request.rank_preference
+                if isinstance(request.rank_preference, NearbyRankPreference)
+                else None
+            )
             nearby_req = NearbyDiscoveryRequest(
                 radius=request.radius,
                 max_result_count=request.max_result_count,
+                rank_preference=nearby_rank_preference,
             )
             places, from_cache, lat, lon = await self.nearby_search(nearby_req, user_id)
             return places, from_cache, "nearby", lat, lon

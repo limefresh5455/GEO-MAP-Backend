@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, DateTime, Float, Index,
+    Boolean, Column, DateTime, Float, Index,
     Integer, String, Text,
 )
 from sqlalchemy.sql import func
@@ -25,7 +25,7 @@ class SearchQuery(Base):
     longitude       User location at query time.
     radius          Radius in metres sent by client (nullable).
     result_count    How many places Google returned.
-    from_cache      Whether the response was served from Redis.
+    from_cache      Whether the response was served from Redis (Boolean).
     created_at      Server-side UTC timestamp — indexed for time-range queries.
     """
 
@@ -47,7 +47,10 @@ class SearchQuery(Base):
     radius = Column(Float, nullable=True)
 
     result_count = Column(Integer, nullable=True, default=0)
-    from_cache = Column(String(5), nullable=False, default="false")  # "true"/"false"
+
+    # B21 FIX: Boolean column — was String(5) storing "true"/"false" strings,
+    # which made SQL analytics queries unintuitive and non-standard.
+    from_cache = Column(Boolean, nullable=False, default=False)
 
     created_at = Column(
         DateTime(timezone=True),

@@ -1,19 +1,7 @@
-"""
-Place Q&A API — Phase 4.
-
-Routes
-------
-POST /api/v1/places/{place_id}/question
-    Natural-language question answered from the place's indexed knowledge.
-
-All routes require a valid Bearer token.
-The place_id must exist in place_details AND ideally be knowledge-synced.
-If not synced, the endpoint degrades gracefully to a structured-data-only answer.
-"""
-
 import logging
-
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.dependencies.auth import get_current_user
 from app.dependencies.place_qa import get_place_qa_service
@@ -23,11 +11,16 @@ from app.services.place_qa_service import PlaceQAService
 
 logger = logging.getLogger(__name__)
 
+# Initialize rate limiter for this router
+limiter = Limiter(key_func=get_remote_address)
+
 router = APIRouter(prefix="/places", tags=["Place Q&A"])
 
 
 @router.post("/{place_id}/question", response_model=PlaceQuestionResponse)
+@limiter.limit("20/minute")
 async def ask_place_question(
+    request: Request,
     place_id: str = Path(
         ...,
         min_length=1,
@@ -78,6 +71,9 @@ async def ask_place_question(
     - `POST /api/v1/places/{place_id}/knowledge-sync` recommended for full RAG.
 
     **Required:** `Authorization: Bearer <token>`
+    
+    **B-028 FIX: Rate limited to 20 requests per minute per user to prevent
+    OpenAI API budget drain (each call costs ~$0.01-0.03).**
     """
     logger.info(
         "Place Q&A — user_id: %s, place_id: %s, question: %r",

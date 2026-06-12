@@ -1,5 +1,20 @@
+"""
+Location service — GPS and manual location management.
+
+B09 FIX: Race condition on concurrent GPS updates handled via DB-level
+  IntegrityError catching. A partial unique index on user_locations
+  (user_id) WHERE is_current=True enforces the single-current-location
+  invariant at the database level. The service catches IntegrityError and
+  retries once, making concurrent pings safe.
+
+  The migration for this index is:
+  alembic/versions/  (see Phase B migration file)
+"""
+
+import logging
 from typing import Optional, Tuple
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.exceptions.custom_exceptions import LocationNotFoundError
@@ -11,6 +26,8 @@ from app.validators.location_validator import (
     validate_accuracy,
     validate_coordinates,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class LocationService:
@@ -27,23 +44,13 @@ class LocationService:
     # GPS Update (auto from client)
     # ------------------------------------------------------------------
 
-    def process_gps_update(
+    def _do_gps_write(
         self, user_id: int, payload: GPSUpdateRequest
     ) -> Tuple[UserLocation, bool]:
         """
-        Core GPS update logic:
-        1. Validate coordinates.
-        2. Check for duplicate (within 10m Haversine threshold).
-        3. Deactivate previous current location.
-        4. Create new current location record.
-        5. Write history entry.
-        6. Commit.
-
-        Returns (UserLocation, is_duplicate).
+        Core write path for GPS update — extracted so it can be retried
+        once on IntegrityError (B09: race condition guard).
         """
-        validate_coordinates(payload.latitude, payload.longitude)
-        validate_accuracy(payload.accuracy)
-
         existing = self.repo.get_current_location(user_id)
 
         if existing and is_duplicate_location(
@@ -82,6 +89,52 @@ class LocationService:
         self.db.commit()
         self.db.refresh(new_location)
         return new_location, False
+
+    def process_gps_update(
+        self, user_id: int, payload: GPSUpdateRequest
+    ) -> Tuple[UserLocation, bool]:
+        """
+        Core GPS update logic:
+        1. Validate coordinates.
+        2. Check for duplicate (within 10m Haversine threshold).
+        3. Deactivate previous current location.
+        4. Create new current location record.
+        5. Write history entry.
+        6. Commit.
+
+        Returns (UserLocation, is_duplicate).
+
+        B09 FIX: If two concurrent requests both pass the duplicate check and
+        both try to insert is_current=True, the DB partial unique index raises
+        IntegrityError on the second insert. We catch it, rollback, and retry
+        once — the retry will find the winner's row as the existing location
+        and detect it as a duplicate (within 10m) or create a fresh one safely.
+        """
+        validate_coordinates(payload.latitude, payload.longitude)
+        validate_accuracy(payload.accuracy)
+
+        try:
+            return self._do_gps_write(user_id, payload)
+        except IntegrityError as e:
+            # B042 FIX: Check which constraint failed to avoid masking other errors.
+            # Only retry if the unique current location constraint was violated.
+            constraint_name = "uix_user_locations_single_current"
+            if constraint_name in str(e.orig):
+                # B09: Lost the race — another concurrent request already committed
+                # a new is_current=True row. Roll back and retry once.
+                logger.warning(
+                    "GPS update IntegrityError for user_id=%s — concurrent write "
+                    "detected on %s constraint, retrying once.", user_id, constraint_name
+                )
+                self.db.rollback()
+                return self._do_gps_write(user_id, payload)
+            else:
+                # Different constraint violation — re-raise so it's not masked
+                logger.error(
+                    "GPS update IntegrityError for user_id=%s — NOT a race condition: %s",
+                    user_id, str(e)
+                )
+                raise
 
     # ------------------------------------------------------------------
     # Manual Update

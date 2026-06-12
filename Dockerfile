@@ -5,9 +5,13 @@ WORKDIR /app
 # Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# Create non-root runtime user
+RUN groupadd --system app && useradd --system --gid app --create-home app
 
 # Copy application code
-COPY . .
+COPY --chown=app:app . .
+
+USER app
 
 EXPOSE 8000
 

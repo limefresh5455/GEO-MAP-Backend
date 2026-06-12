@@ -1,4 +1,11 @@
-from fastapi import Depends
+"""
+Dependency providers for the Places (legacy nearby search) layer.
+
+B10 FIX: GooglePlacesClient now receives the shared httpx.AsyncClient
+from app.state, eliminating per-request TCP/TLS connection overhead.
+"""
+
+from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
 from app.core.redis import get_redis_client
@@ -9,19 +16,17 @@ from app.services.places_service import PlacesService
 
 
 def get_redis_repo() -> RedisRepository:
-    client = get_redis_client()
-    return RedisRepository(client)
-
-
-def get_google_client() -> GooglePlacesClient:
-    return GooglePlacesClient()
+    return RedisRepository(get_redis_client())
 
 
 def get_places_service(
+    request: Request,
     db: Session = Depends(get_db),
     redis_repo: RedisRepository = Depends(get_redis_repo),
-    google_client: GooglePlacesClient = Depends(get_google_client),
 ) -> PlacesService:
+    # B10: Inject the shared httpx client from app.state
+    http_client = getattr(request.app.state, "http_nearby", None)
+    google_client = GooglePlacesClient(http_client=http_client)
     return PlacesService(
         db=db,
         redis_repo=redis_repo,

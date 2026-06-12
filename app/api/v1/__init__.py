@@ -1,18 +1,40 @@
+"""
+API v1 Router Aggregation
+
+All v1 endpoints are registered here and exposed via a single api_router.
+"""
+
 from fastapi import APIRouter
 
-from app.api.v1.auth import router as auth_router
-from app.api.v1.locations import router as location_router
-from app.api.v1.places import router as places_router
-from app.api.v1.discovery import router as discovery_router
-from app.api.v1.place_details import router as place_details_router
-from app.api.v1.knowledge import router as knowledge_router
-from app.api.v1.place_qa import router as place_qa_router
+from app.api.v1 import (
+    auth,
+    discovery,
+    knowledge,
+    locations,
+    place_details,
+    place_qa,
+    places,
+)
 
 api_router = APIRouter(prefix="/api/v1")
-api_router.include_router(auth_router)
-api_router.include_router(location_router)
-api_router.include_router(places_router)
-api_router.include_router(discovery_router)
-api_router.include_router(place_details_router)
-api_router.include_router(knowledge_router)
-api_router.include_router(place_qa_router)
+
+# Authentication routes
+api_router.include_router(auth.router)
+
+# Location management routes
+api_router.include_router(locations.router)
+
+# Legacy nearby search (Phase 0)
+api_router.include_router(places.router)
+
+# Discovery routes (Phase 1 - Text Search + Nearby + Router)
+api_router.include_router(discovery.router)
+
+# Place Details routes (Phase 2)
+api_router.include_router(place_details.router)
+
+# Knowledge Sync routes (Phase 3)
+api_router.include_router(knowledge.router)
+
+# Place Q&A routes (Phase 4)
+api_router.include_router(place_qa.router)

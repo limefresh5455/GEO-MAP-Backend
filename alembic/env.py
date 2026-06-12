@@ -1,7 +1,7 @@
 from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
-# Lod app settings
+# Load app settings
 from app.core.config import settings
 
 # Import all models so Alembic detects them

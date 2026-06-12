@@ -5,7 +5,7 @@ Covers:
   POST /api/v1/places/{place_id}/knowledge-sync
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -81,4 +81,4 @@ class KnowledgeSyncResponse(BaseModel):
 
     # Metadata
     synced_at: Optional[datetime] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

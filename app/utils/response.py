@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from app.schemas.places import NearbySearchResponse, PlaceResult
@@ -27,5 +27,5 @@ def build_nearby_response(
         cached=from_cache,
         search_latitude=search_latitude,
         search_longitude=search_longitude,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),  # B31 FIX: timezone-aware UTC
     )

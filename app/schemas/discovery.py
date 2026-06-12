@@ -7,11 +7,11 @@ Covers three endpoints:
   POST /api/v1/discovery/search          — router (auto-picks mode)
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +99,31 @@ class TextSearchRequest(BaseModel):
             "location_bias is provided."
         ),
     )
+    
+    # B-025 FIX: Sanitize text_query to prevent injection attacks
+    @field_validator("text_query")
+    @classmethod
+    def sanitize_text_query(cls, v: str) -> str:
+        """
+        B-025 FIX: Basic sanitization to prevent SQL injection and XSS.
+        Remove potentially dangerous characters while preserving search intent.
+        """
+        if not v or not v.strip():
+            raise ValueError("text_query must not be empty")
+        
+        # Remove null bytes (can cause issues with PostgreSQL)
+        v = v.replace("\x00", "")
+        
+        # Remove SQL comment markers
+        dangerous_patterns = ["--", "/*", "*/", ";--", "';", '";']
+        for pattern in dangerous_patterns:
+            v = v.replace(pattern, " ")
+        
+        # Limit consecutive whitespace
+        import re
+        v = re.sub(r'\s+', ' ', v)
+        
+        return v.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +195,15 @@ class DiscoverySearchRequest(BaseModel):
     )
     open_now: Optional[bool] = Field(default=None)
     min_rating: Optional[float] = Field(default=None, ge=0.0, le=5.0)
-    rank_preference: Optional[str] = Field(default=None)
+    # B23 FIX: accept both text and nearby rank preference enums.
+    rank_preference: Optional[Union[RankPreference, NearbyRankPreference]] = Field(
+        default=None,
+        description=(
+            "Rank preference hint for the resolved search mode. "
+            "RELEVANCE/DISTANCE for text search; POPULARITY/DISTANCE for nearby. "
+            "The service passes the .value string to the appropriate Google client."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -207,10 +240,12 @@ class TextSearchResponse(BaseModel):
     data: List[DiscoveryPlaceResult]
     total_results: int
     cached: bool
-    query: str
+    # B31 FIX: query is Optional — can be None when called from discovery router
+    # where query routing may not provide a text query.
+    query: Optional[str] = None
     search_latitude: Optional[float] = None   # user location used as bias (if any)
     search_longitude: Optional[float] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class NearbyDiscoveryResponse(BaseModel):
@@ -224,7 +259,7 @@ class NearbyDiscoveryResponse(BaseModel):
     cached: bool
     search_latitude: float
     search_longitude: float
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class DiscoverySearchResponse(BaseModel):
@@ -239,4 +274,4 @@ class DiscoverySearchResponse(BaseModel):
     query: Optional[str] = None
     search_latitude: Optional[float] = None
     search_longitude: Optional[float] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

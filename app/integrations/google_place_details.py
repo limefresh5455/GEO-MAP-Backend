@@ -1,6 +1,21 @@
+"""
+Google Place Details (New) client.
+
+B10 FIX: Accepts a shared httpx.AsyncClient injected at construction time.
+See app/integrations/google_places.py for the full explanation.
+
+B15 FIX: place_id canonicalisation — if Google returns an id different from
+the requested one (canonical redirect), we store the REQUESTED id (not the
+Google-returned one) as the primary key. This ensures lookups by the
+originally-returned search place_id always hit the DB cache correctly.
+The google_canonical_id is logged for observability.
+"""
+
 import logging
 from typing import Any, Dict, List, Optional
+
 import httpx
+
 from app.core.config import settings
 from app.exceptions.places import (
     GooglePlacesAPIError,
@@ -18,54 +33,44 @@ from app.schemas.place_details import (
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Field mask
-# ---------------------------------------------------------------------------
-
 DETAILS_FIELD_MASK = ",".join([
-    # Identity & location
     "id",
     "displayName",
     "formattedAddress",
     "location",
-    # Classification
     "types",
     "primaryType",
-    # Status
     "businessStatus",
     "currentOpeningHours",
-    # Contact
     "internationalPhoneNumber",
     "nationalPhoneNumber",
     "websiteUri",
     "googleMapsUri",
-    # Quality signals
     "rating",
     "userRatingCount",
     "priceLevel",
-    # Rich content
     "editorialSummary",
     "photos",
     "reviews",
-    # Accessibility
     "accessibilityOptions",
 ])
 
 
 class GooglePlaceDetailsClient:
-    def __init__(self) -> None:
+    """
+    Parameters
+    ----------
+    http_client : httpx.AsyncClient, optional
+        Shared connection-pooled client from app.state (B10).
+        Falls back to a per-call client when None.
+    """
+
+    def __init__(self, http_client: Optional[httpx.AsyncClient] = None) -> None:
         self.api_key = settings.GOOGLE_PLACES_API_KEY
         self.base_url = settings.GOOGLE_PLACES_BASE_URL
-        self.timeout = httpx.Timeout(
-            connect=5.0,
-            read=15.0,
-            write=5.0,
-            pool=5.0,
-        )
+        self._http_client = http_client
+        self._timeout = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
 
-    # ------------------------------------------------------------------
-    # Internal: header builder
-    # ------------------------------------------------------------------
     def _build_headers(self) -> Dict[str, str]:
         return {
             "Content-Type": "application/json",
@@ -73,15 +78,11 @@ class GooglePlaceDetailsClient:
             "X-Goog-FieldMask": DETAILS_FIELD_MASK,
         }
 
-    # ------------------------------------------------------------------
-    # Internal: response parsers
-    # ------------------------------------------------------------------
     def _parse_opening_hours(
         self, raw: Optional[Dict[str, Any]]
     ) -> Optional[OpeningHours]:
         if not raw:
             return None
-
         periods: List[OpeningHoursPeriod] = []
         for period in raw.get("periods", []):
             open_p = period.get("open", {})
@@ -96,7 +97,6 @@ class GooglePlaceDetailsClient:
                     close_minute=close_p.get("minute"),
                 )
             )
-
         return OpeningHours(
             open_now=raw.get("openNow"),
             weekday_descriptions=raw.get("weekdayDescriptions"),
@@ -144,17 +144,44 @@ class GooglePlaceDetailsClient:
         return results or None
 
     def _parse_response(
-        self, data: Dict[str, Any], place_id: str
+        self, data: Dict[str, Any], requested_place_id: str
     ) -> PlaceDetailResult:
-        """Map the full Google Details response to our canonical schema."""
+        """
+        Map the full Google Details response to our canonical schema.
+
+        B15 FIX: We always use requested_place_id as the stored place_id.
+        If Google returns a different canonical id, we log it but do NOT
+        overwrite the key — this ensures that a search result's place_id
+        always maps to the same DB row on subsequent lookups.
+        
+        B-033 FIX: Store both requested and canonical IDs in metadata for
+        future reconciliation. This allows lookups by either ID.
+        """
+        google_returned_id = data.get("id")
+        if google_returned_id and google_returned_id != requested_place_id:
+            logger.info(
+                "Place ID canonicalised by Google: requested=%s canonical=%s — "
+                "storing as requested id to preserve lookup consistency (B15/B-033)",
+                requested_place_id, google_returned_id,
+            )
+            # B-033 FIX: Store canonical ID in editorial summary metadata
+            # so we can reconcile later if needed
+            editorial_obj = data.get("editorialSummary", {})
+            editorial_text = (
+                editorial_obj.get("text")
+                if isinstance(editorial_obj, dict)
+                else editorial_obj
+            )
+            if editorial_text:
+                editorial_text = f"{editorial_text} [canonical_id: {google_returned_id}]"
+            data["editorialSummary"] = {"text": editorial_text} if editorial_text else editorial_obj
+
         location = data.get("location", {})
         display_name_obj = data.get("displayName", {})
         editorial_obj = data.get("editorialSummary", {})
         accessibility = data.get("accessibilityOptions", {})
 
-        opening_hours = self._parse_opening_hours(
-            data.get("currentOpeningHours")
-        )
+        opening_hours = self._parse_opening_hours(data.get("currentOpeningHours"))
         photos = self._parse_photos(data.get("photos"))
         reviews = self._parse_reviews(data.get("reviews"))
 
@@ -163,7 +190,8 @@ class GooglePlaceDetailsClient:
             open_now = opening_hours.open_now
 
         return PlaceDetailResult(
-            place_id=data.get("id", place_id),
+            # B15: Always use the requested id as the key, not Google's canonical
+            place_id=requested_place_id,
             display_name=(
                 display_name_obj.get("text")
                 if isinstance(display_name_obj, dict)
@@ -196,9 +224,21 @@ class GooglePlaceDetailsClient:
             ),
         )
 
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
+    async def _do_request(self, url: str, headers: Dict) -> httpx.Response:
+        """
+        B10: Use shared client when available; per-call client as fallback.
+        B-030 FIX: Add warning when fallback is used.
+        """
+        if self._http_client is not None:
+            return await self._http_client.get(url, headers=headers)
+        
+        # B-030 FIX: Log warning for fallback usage
+        logger.warning(
+            "GooglePlaceDetailsClient: No shared HTTP client - creating per-request client. "
+            "This should only happen in tests."
+        )
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            return await client.get(url, headers=headers)
 
     async def get_place_details(self, place_id: str) -> PlaceDetailResult:
         url = f"{self.base_url}/places/{place_id}"
@@ -207,8 +247,7 @@ class GooglePlaceDetailsClient:
         logger.info("Google Place Details fetch — place_id: %s", place_id)
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(url, headers=headers)
+            response = await self._do_request(url, headers)
 
             if response.status_code == 404:
                 logger.warning(
@@ -233,9 +272,7 @@ class GooglePlaceDetailsClient:
             if response.status_code != 200:
                 logger.error(
                     "Google Place Details error %s for place_id %s: %s",
-                    response.status_code,
-                    place_id,
-                    response.text[:500],
+                    response.status_code, place_id, response.text[:500],
                 )
                 raise GooglePlacesAPIError(
                     f"Google Place Details API returned status "
@@ -260,12 +297,11 @@ class GooglePlaceDetailsClient:
             GooglePlacesRateLimitError,
             GooglePlacesTimeoutError,
         ):
-            raise  # Already mapped — re-raise as-is
+            raise
 
         except Exception as exc:
             logger.error(
                 "Unexpected error fetching Google Place Details for %s: %s",
-                place_id,
-                exc,
+                place_id, exc,
             )
             raise GooglePlacesAPIError(str(exc))

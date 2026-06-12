@@ -89,6 +89,8 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
     -------
     Dict[section_name -> text] — sections with empty text are excluded
     by the caller.
+    
+    B-053 FIX: Safe dict access for opening_hours to prevent AttributeError.
     """
     sections: Dict[str, str] = {}
 
@@ -122,17 +124,21 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
 
     # ------------------------------------------------------------------
     # 3. Opening hours
+    # B-053 FIX: Safe dict access with proper None checks
     # ------------------------------------------------------------------
     hours_parts = []
     if place.open_now is not None:
         hours_parts.append(
             f"Currently open: {'Yes' if place.open_now else 'No'}"
         )
-    if place.opening_hours and isinstance(place.opening_hours, dict):
-        weekdays = place.opening_hours.get("weekday_descriptions") or []
-        if weekdays:
-            hours_parts.append("Opening hours:")
-            hours_parts.extend(f"  {line}" for line in weekdays)
+    # B-053 FIX: Check if opening_hours exists and is a dict before accessing
+    if place.opening_hours:
+        if isinstance(place.opening_hours, dict):
+            weekdays = place.opening_hours.get("weekday_descriptions")
+            if weekdays and isinstance(weekdays, list):
+                hours_parts.append("Opening hours:")
+                hours_parts.extend(f"  {line}" for line in weekdays)
+    
     if hours_parts:
         sections["hours"] = "\n".join(hours_parts)
 

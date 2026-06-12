@@ -106,10 +106,18 @@ class OpenAIEmbeddingClient:
         if not texts:
             return []
 
+        # B-036 FIX: Filter out empty strings before sending to OpenAI
+        # OpenAI API rejects empty strings with 400 Bad Request
+        filtered_texts = [t for t in texts if t and t.strip()]
+        
+        if not filtered_texts:
+            # All texts were empty - return empty vectors for each
+            return [[0.0] * 1536 for _ in texts]
+
         all_embeddings: List[List[float]] = []
 
-        for batch_start in range(0, len(texts), _BATCH_LIMIT):
-            batch = texts[batch_start: batch_start + _BATCH_LIMIT]
+        for batch_start in range(0, len(filtered_texts), _BATCH_LIMIT):
+            batch = filtered_texts[batch_start: batch_start + _BATCH_LIMIT]
             logger.info(
                 "OpenAI embed — model: %s, batch: %d texts (offset %d)",
                 self.model,

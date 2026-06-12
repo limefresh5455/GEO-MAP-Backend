@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.location_history import LocationHistory
@@ -43,14 +44,28 @@ class LocationRepository:
     def get_history(
         self, user_id: int, page: int = 1, page_size: int = 20
     ) -> Tuple[List[LocationHistory], int]:
-        """Return paginated location history and total record count."""
-        query = (
-            self.db.query(LocationHistory)
+        """
+        Return paginated location history and total record count.
+
+        B20 FIX: Uses a single SQL query with a window function (COUNT(*) OVER())
+        instead of two separate queries (count() + all()). This eliminates the
+        N+1 query pattern for pagination and is significantly faster for users
+        with large location histories.
+        """
+        # Window function: COUNT(*) OVER() runs once per result set, not per page
+        count_col = func.count(LocationHistory.id).over().label("total_count")
+        rows = (
+            self.db.query(LocationHistory, count_col)
             .filter(LocationHistory.user_id == user_id)
             .order_by(LocationHistory.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
         )
-        total = query.count()
-        items = query.offset((page - 1) * page_size).limit(page_size).all()
+        if not rows:
+            return [], 0
+        items = [row[0] for row in rows]
+        total = rows[0][1]   # all rows carry the same window count
         return items, total
 
     # ------------------------------------------------------------------

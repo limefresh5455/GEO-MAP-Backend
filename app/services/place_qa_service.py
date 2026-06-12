@@ -1,44 +1,3 @@
-"""
-PlaceQAService — Geo Dynamic RAG pipeline for place-scoped Q&A.
-
-Full pipeline for POST /api/v1/places/{place_id}/question:
-
-  Step 1  Load place details from PostgreSQL.
-          → Raises PlaceDetailNotFoundError if not yet fetched.
-  Step 2  Load knowledge sync state from place_knowledge_sync.
-          → Determines whether Pinecone retrieval is available.
-  Step 3  Embed the user's question via OpenAI text-embedding-3-small.
-  Step 4  Query Pinecone namespace "place_{place_id}" for top-k matches.
-          → If no sync record or status != "synced": skip to structured-only path.
-  Step 5  Filter matches below similarity threshold (0.30 cosine).
-  Step 6  Build a structured facts block from PostgreSQL columns.
-          → Always included regardless of Pinecone result count.
-  Step 7  Assemble context package: structured block + retrieved chunks.
-  Step 8  Build system prompt that binds the model to the context.
-  Step 9  Call OpenAI gpt-4o-mini with the context + question.
-  Step 10 Compute confidence score from Pinecone similarity scores.
-  Step 11 Persist question + answer logs to PostgreSQL.
-  Step 12 Commit.
-  Step 13 Return PlaceQuestionResponse.
-
-Answer source labels
---------------------
-  "rag"             — Pinecone retrieval succeeded, answer grounded on chunks
-  "structured_only" — Pinecone returned 0 useful matches; answer from PG data
-  "fallback"        — place not yet knowledge-synced; answer from name/address only
-
-Design rules
-------------
-- The answer NEVER invents facts. The system prompt explicitly instructs the
-  model to say "I don't have that information" rather than hallucinate.
-- Context is always bounded to one place (namespace isolation in Pinecone).
-- Confidence score is the mean cosine similarity of accepted Pinecone matches,
-  scaled to 0.0–1.0. Returns None on structured_only / fallback paths.
-- Audit writes (question + answer log) are in a finally-like block — if they
-  fail, the error is logged and swallowed so the user still gets their answer.
-- Latency is measured end-to-end from question embed to answer return.
-"""
-
 import logging
 import time
 from datetime import datetime, timezone
@@ -66,19 +25,64 @@ logger = logging.getLogger(__name__)
 _SIMILARITY_THRESHOLD = 0.30
 
 # System prompt template — {context_block} is replaced at runtime
-_SYSTEM_PROMPT_TEMPLATE = """You are a helpful local guide assistant answering questions about a specific place.
+# ENHANCED: More human-like, conversational responses with better context awareness
+_SYSTEM_PROMPT_TEMPLATE = """You are a friendly and knowledgeable local guide who helps people discover and learn about places in their area. Your goal is to provide helpful, accurate, and conversational answers that feel natural and human.
 
-You MUST answer ONLY from the information provided in the PLACE CONTEXT below.
-If the context does not contain enough information to answer the question, say:
-"I don't have that information about this place."
-Do NOT invent, guess, or use any outside knowledge.
-Be concise. Answer in 1–4 sentences unless a list is clearly more appropriate.
+**LANGUAGE REQUIREMENT:**
+- ALWAYS respond in ENGLISH, regardless of the language used in the question
+- If the user asks in Hindi, Hinglish, or any other language, translate your answer to English
+- Use clear, simple English that's easy to understand
 
-PLACE CONTEXT:
-{context_block}"""
+**Response Guidelines:**
 
+1. **BE CONVERSATIONAL**: Write like you're talking to a friend, not a robot.
+   - ✅ Good: "Yes, they're open right now! They close at 9 PM today."
+   - ❌ Bad: "Status: Open. Closing time: 21:00."
+
+2. **BE HELPFUL**: If the question needs context, provide it naturally.
+   - Example: "They have a 4.2 rating with over 200 reviews, which is pretty good for this area!"
+
+3. **BE HONEST**: If information is missing, acknowledge it kindly and suggest alternatives.
+   - ✅ Good: "I don't see specific parking information, but based on the location in downtown, there's likely street parking nearby."
+   - ❌ Bad: "I don't have that information about this place."
+
+4. **USE NATURAL LANGUAGE**:
+   - Instead of "Rating: 4.2/5.0" → say "It has a solid 4.2-star rating"
+   - Instead of "Open now: Yes" → say "Yes, they're open right now"
+   - Instead of "Wheelchair accessible: Yes" → say "Good news - this place is wheelchair accessible"
+
+5. **BE SPECIFIC**: When you have details, share them.
+   - ✅ "They serve breakfast from 7 AM and have vegetarian options available."
+   - ❌ "They serve food."
+
+6. **SYNTHESIZE INFORMATION**: Connect related facts to give better answers.
+   - Question: "Is it good for families?"
+   - ✅ Good: "Yes! They have a children's menu, outdoor seating, and many reviews mention it's family-friendly. Plus, the atmosphere is casual and relaxed."
+   - ❌ Bad: "Yes, good for children."
+
+7. **HANDLE SENTIMENT**: Extract sentiment from reviews naturally.
+   - ✅ "People love the coffee here! Several reviews specifically mention the great espresso and friendly baristas."
+   - ❌ "Reviews mention coffee and staff."
+
+**CRITICAL RULES:**
+- ALWAYS respond in ENGLISH only
+- Answer ONLY from the PLACE CONTEXT below
+- DO NOT invent facts, prices, or details not in the context
+- If unsure, say so - but in a friendly way
+- Keep answers concise (2-4 sentences) unless a list or detailed explanation is clearly needed
+- Use conversational contractions (they're, it's, you'll, etc.)
+
+**PLACE CONTEXT:**
+{context_block}
+
+Now, answer the user's question in ENGLISH in a friendly, natural, and helpful way based on this context."""
+
+# B051 FIX: Changed from 4 to 3 chars per token for safer budget control.
 # Approximate characters per token (rough estimate for token budget)
-_CHARS_PER_TOKEN = 4
+# The tighter ratio (3 instead of 4) provides a safety margin to prevent
+# exceeding the OpenAI context window, especially for technical text with
+# special characters, JSON, or non-ASCII content that tokenizes less efficiently.
+_CHARS_PER_TOKEN = 3
 
 
 def _build_structured_facts_block(place) -> str:
@@ -86,56 +90,95 @@ def _build_structured_facts_block(place) -> str:
     Build a short structured text block from PostgreSQL columns.
     Always included in the context — provides a reliable baseline even
     when Pinecone retrieval returns nothing.
+    
+    ENHANCED: More natural language formatting for better GPT comprehension
     """
-    lines = []
+    sections = []
 
+    # Basic info section
+    basic_info = []
     if place.display_name:
-        lines.append(f"Place name: {place.display_name}")
+        basic_info.append(f"This is {place.display_name}")
     if place.formatted_address:
-        lines.append(f"Address: {place.formatted_address}")
+        basic_info.append(f"located at {place.formatted_address}")
     if place.primary_type:
-        lines.append(f"Category: {place.primary_type}")
+        type_label = place.primary_type.replace("_", " ").title()
+        basic_info.append(f"It's a {type_label}")
+    
+    if basic_info:
+        sections.append(". ".join(basic_info) + ".")
 
+    # Ratings and popularity
+    rating_info = []
     if place.rating is not None:
-        lines.append(f"Rating: {place.rating}/5.0")
+        rating_info.append(f"Rating: {place.rating} out of 5 stars")
     if place.user_rating_count is not None:
-        lines.append(f"Total reviews: {place.user_rating_count}")
+        rating_info.append(f"based on {place.user_rating_count} reviews")
+    if rating_info:
+        sections.append(" ".join(rating_info) + ".")
 
+    # Business status
     if place.business_status:
-        label = place.business_status.replace("_", " ").capitalize()
-        lines.append(f"Status: {label}")
+        status = place.business_status.replace("_", " ").lower()
+        if status == "operational":
+            sections.append("The business is currently operational.")
+        else:
+            sections.append(f"Business status: {status}.")
 
+    # Current status
     if place.open_now is not None:
-        lines.append(f"Open now: {'Yes' if place.open_now else 'No'}")
+        if place.open_now:
+            sections.append("Currently OPEN for customers.")
+        else:
+            sections.append("Currently CLOSED.")
 
+    # Operating hours
     if place.opening_hours and isinstance(place.opening_hours, dict):
         weekdays = place.opening_hours.get("weekday_descriptions") or []
         if weekdays:
-            lines.append("Opening hours:")
+            sections.append("Operating hours:")
             for day in weekdays:
-                lines.append(f"  {day}")
+                sections.append(f"  • {day}")
 
+    # Contact and web presence
+    contact_items = []
     if place.international_phone_number:
-        lines.append(f"Phone: {place.international_phone_number}")
+        contact_items.append(f"Phone: {place.international_phone_number}")
     if place.website_uri:
-        lines.append(f"Website: {place.website_uri}")
+        contact_items.append(f"Website: {place.website_uri}")
     if place.google_maps_uri:
-        lines.append(f"Google Maps: {place.google_maps_uri}")
+        contact_items.append(f"Google Maps: {place.google_maps_uri}")
+    
+    if contact_items:
+        sections.append("Contact information:")
+        for item in contact_items:
+            sections.append(f"  • {item}")
 
+    # Price level (with human interpretation)
     if place.price_level:
-        label = place.price_level.replace("PRICE_LEVEL_", "").capitalize()
-        lines.append(f"Price level: {label}")
+        price = place.price_level.replace("PRICE_LEVEL_", "").lower()
+        price_descriptions = {
+            "free": "Free admission or no cost",
+            "inexpensive": "Budget-friendly (₹)",
+            "moderate": "Moderately priced (₹₹)",
+            "expensive": "Upscale pricing (₹₹₹)",
+            "very_expensive": "Premium/luxury pricing (₹₹₹₹)"
+        }
+        price_text = price_descriptions.get(price, price.capitalize())
+        sections.append(f"Price range: {price_text}")
 
+    # Accessibility
     if place.wheelchair_accessible_entrance is not None:
-        lines.append(
-            f"Wheelchair accessible: "
-            f"{'Yes' if place.wheelchair_accessible_entrance else 'No'}"
-        )
+        if place.wheelchair_accessible_entrance:
+            sections.append("♿ Wheelchair accessible entrance available.")
+        else:
+            sections.append("Note: No wheelchair accessible entrance.")
 
+    # About / Editorial
     if place.editorial_summary:
-        lines.append(f"About: {place.editorial_summary}")
+        sections.append(f"\nAbout this place: {place.editorial_summary}")
 
-    return "\n".join(lines)
+    return "\n".join(sections)
 
 
 def _compute_confidence(scores: List[float]) -> Optional[float]:
@@ -149,7 +192,17 @@ def _compute_confidence(scores: List[float]) -> Optional[float]:
 
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate — character count / 4."""
+    """
+    B051 FIX: Improved token estimation for better budget control.
+    
+    Rough token estimate using _CHARS_PER_TOKEN ratio (now 3 chars per token).
+    GPT models use subword tokenization — this is a conservative approximation.
+    
+    For production use, consider using the `tiktoken` library for exact counts:
+      import tiktoken
+      encoding = tiktoken.encoding_for_model("gpt-4")
+      return len(encoding.encode(text))
+    """
     return max(1, len(text) // _CHARS_PER_TOKEN)
 
 
@@ -322,9 +375,55 @@ class PlaceQAService:
         )
 
         # ----------------------------------------------------------
-        # Step 6 — Build structured facts block (always present)
+        # B-050 FIX: Enforce token budget BEFORE building full context
+        # Sort matches by score descending, then trim to fit budget
         # ----------------------------------------------------------
+        max_context_tokens = settings.OPENAI_MAX_CONTEXT_TOKENS
+        
+        # Sort by score (best first)
+        accepted_matches = sorted(
+            accepted_matches, key=lambda m: m.get("score", 0.0), reverse=True
+        )
+        
+        # Build structured facts block (always included)
         structured_block = _build_structured_facts_block(place)
+        structured_tokens = _estimate_tokens(structured_block)
+        
+        # Reserve tokens for structured block + system prompt overhead (~200 tokens)
+        available_for_chunks = max_context_tokens - structured_tokens - 200
+        
+        # Trim chunks to fit budget
+        trimmed_matches = []
+        cumulative_tokens = 0
+        
+        for match in accepted_matches:
+            meta = match.get("metadata", {})
+            text = meta.get("text", "")
+            chunk_tokens = _estimate_tokens(text)
+            
+            if cumulative_tokens + chunk_tokens <= available_for_chunks:
+                trimmed_matches.append(match)
+                cumulative_tokens += chunk_tokens
+            else:
+                logger.info(
+                    "PlaceQA B-050: Dropped chunk (would exceed budget) — "
+                    "score=%.3f, tokens=%d",
+                    match.get("score", 0.0), chunk_tokens
+                )
+                break
+        
+        accepted_matches = trimmed_matches
+        logger.info(
+            "PlaceQA B-050: Token budget enforced — kept %d/%d chunks, "
+            "total_tokens=%d, budget=%d",
+            len(accepted_matches), len(pinecone_matches_list),
+            structured_tokens + cumulative_tokens, max_context_tokens
+        )
+
+        # ----------------------------------------------------------
+        # Step 6 — Build structured facts block (already done above)
+        # ----------------------------------------------------------
+        # (moved before chunk trimming)
 
         # ----------------------------------------------------------
         # Step 7 — Assemble context package
@@ -387,11 +486,13 @@ class PlaceQAService:
 
         # ----------------------------------------------------------
         # Step 9 — Call OpenAI Chat Completions
+        # ENHANCED: Increased temperature from 0.2 to 0.7 for more natural,
+        # human-like conversational responses while maintaining accuracy
         # ----------------------------------------------------------
         answer = await self.openai_client.chat_completion(
             system_prompt=system_prompt,
             user_message=request.question,
-            temperature=0.2,
+            temperature=0.7,  # Increased from 0.2 for more natural responses
             max_tokens=800,
         )
 

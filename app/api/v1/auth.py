@@ -1,10 +1,15 @@
 from datetime import timedelta
-
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
-
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from app.core.config import settings
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import (
+    DUMMY_HASH,
+    create_access_token,
+    hash_password,
+    verify_password,
+)
 from app.database.connection import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
@@ -16,14 +21,13 @@ from app.schemas.auth import (
     UserResponse,
 )
 
+# Initialize limiter for this router
+limiter = Limiter(key_func=get_remote_address)
+
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-
 def _user_to_response(user: User) -> UserResponse:
-    """
-    Explicitly build UserResponse from the ORM object while the session is
-    still open. This prevents SQLAlchemy lazy-load errors after session close.
-    """
+
     return UserResponse(
         id=user.id,
         full_name=user.full_name,
@@ -39,8 +43,9 @@ def _user_to_response(user: User) -> UserResponse:
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def signup(payload: SignupRequest, db: Session = Depends(get_db)):
-    """Register a new user."""
+@limiter.limit("10/minute")
+async def signup(request: Request, payload: SignupRequest, db: Session = Depends(get_db)):
+    # B-021 FIX: Use try-except to catch IntegrityError on race condition
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
         raise HTTPException(
@@ -54,18 +59,40 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         hashed_password=hash_password(payload.password),
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    
+    try:
+        db.commit()
+        db.refresh(user)
+    except Exception as e:
+        db.rollback()
+        # If commit failed due to unique constraint (race condition), return friendly error
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered",
+            )
+        raise
 
-    # Build response while session is still open — avoids lazy-load 500 error
     return _user_to_response(user)
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    """Authenticate user and return a Bearer token."""
+@limiter.limit("10/minute")
+async def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
-    if not user or not verify_password(payload.password, user.hashed_password):
+
+    if not user:
+        # B06 FIX: Run a dummy bcrypt check to normalise response time.
+        # Without this, a missing user returns in <1ms while a wrong password
+        # takes ~100ms — measurable difference that reveals user existence.
+        verify_password(payload.password, DUMMY_HASH)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -81,11 +108,10 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
 @router.post("/logout", response_model=MessageResponse)
 def logout(current_user: User = Depends(get_current_user)):
-    """
-    Logout the current user.
-    Token invalidation is client-side for stateless JWT.
-    """
-    return MessageResponse(message=f"User '{current_user.email}' logged out successfully")
+    
+    return MessageResponse(
+        message=f"User '{current_user.email}' logged out successfully"
+    )
 
 
 @router.get("/me", response_model=UserResponse)

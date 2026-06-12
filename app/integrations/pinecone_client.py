@@ -14,10 +14,15 @@ Index spec
 Design rules
 ------------
 - The Pinecone client is synchronous in SDK 4.x; we wrap blocking calls
-  in asyncio.get_event_loop().run_in_executor() so they do not block
+  in asyncio.get_running_loop().run_in_executor() so they do not block
   FastAPI's async event loop.
-- Index is looked up once per instance (not per call) and cached as
-  self._index.
+- B03 FIX: asyncio.get_event_loop() replaced with asyncio.get_running_loop()
+  throughout — correct API for Python 3.10+ within async contexts.
+- B04 FIX: PineconeClient is intended to be used as a lifespan-managed
+  singleton (see app/main.py). The _index handle is initialised ONCE at
+  startup via initialise() and reused for the application lifetime,
+  eliminating the per-request pc.list_indexes() call.
+- B14 FIX: The ThreadPoolExecutor is shut down cleanly via shutdown().
 - Raises PineconeError (HTTPException subclass) on all failures.
 - upsert() is idempotent — re-upserting the same vector ID overwrites it.
 - query() returns up to top_k ScoredVector objects with metadata.
@@ -38,7 +43,8 @@ logger = logging.getLogger(__name__)
 # Embedding dimension for text-embedding-3-small
 _EMBEDDING_DIM = 1536
 
-# Thread pool for wrapping synchronous Pinecone SDK calls
+# Thread pool for wrapping synchronous Pinecone SDK calls.
+# B14 FIX: Stored at module level so it can be shut down cleanly in lifespan.
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pinecone")
 
 
@@ -52,9 +58,26 @@ class PineconeError(HTTPException):
         )
 
 
+def shutdown_executor() -> None:
+    """
+    B14 FIX: Gracefully shut down the thread pool.
+    Called from the FastAPI lifespan on application shutdown.
+    """
+    logger.info("Shutting down Pinecone thread pool executor...")
+    _executor.shutdown(wait=False)
+    logger.info("Pinecone thread pool executor shut down.")
+
+
 class PineconeClient:
     """
     Thin async wrapper around the Pinecone SDK.
+
+    Lifecycle
+    ---------
+    Instantiate once at application startup and call await initialise()
+    to connect to Pinecone and cache the index handle.  Inject the same
+    instance into all services via app.state.pinecone_client so the
+    index lookup happens only once per process, not per request (B04).
 
     Responsibilities:
     - Ensure the index exists (create if absent, serverless spec).
@@ -69,30 +92,37 @@ class PineconeClient:
         self._index_name = settings.PINECONE_INDEX_NAME
 
     # ------------------------------------------------------------------
-    # Internal: lazy init
+    # Lifecycle: call once at startup
     # ------------------------------------------------------------------
 
-    def _get_pinecone(self) -> Pinecone:
-        if self._pc is None:
-            self._pc = Pinecone(api_key=settings.PINECONE_API_KEY)
-        return self._pc
+    async def initialise(self) -> None:
+        """
+        B04 FIX: Connect to Pinecone and cache the index handle at startup.
+        Eliminates the per-request pc.list_indexes() call.
+        Called from FastAPI lifespan — runs in executor to avoid blocking.
+        """
+        logger.info("Initialising Pinecone client — index: %s", self._index_name)
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(_executor, self._sync_initialise)
+            logger.info(
+                "Pinecone client ready — index: %s", self._index_name
+            )
+        except Exception as exc:
+            logger.error("Pinecone initialisation failed: %s", exc)
+            raise PineconeError(f"Pinecone initialisation failed: {exc}")
 
-    def _get_index(self):
-        """Return (or lazily create) the Pinecone index handle."""
-        if self._index is not None:
-            return self._index
-
-        pc = self._get_pinecone()
-
-        # List existing indexes
-        existing_names = [idx.name for idx in pc.list_indexes()]
+    def _sync_initialise(self) -> None:
+        """Synchronous init — runs in thread pool."""
+        self._pc = Pinecone(api_key=settings.PINECONE_API_KEY)
+        existing_names = [idx.name for idx in self._pc.list_indexes()]
 
         if self._index_name not in existing_names:
             logger.info(
                 "Pinecone index '%s' not found — creating serverless index",
                 self._index_name,
             )
-            pc.create_index(
+            self._pc.create_index(
                 name=self._index_name,
                 dimension=_EMBEDDING_DIM,
                 metric="cosine",
@@ -105,7 +135,27 @@ class PineconeClient:
                 "Pinecone index '%s' created successfully", self._index_name
             )
 
-        self._index = pc.Index(self._index_name)
+        self._index = self._pc.Index(self._index_name)
+
+    # ------------------------------------------------------------------
+    # Internal: lazy fallback (handles direct instantiation in tests)
+    # ------------------------------------------------------------------
+
+    def _get_index(self):
+        """
+        Return the cached index handle.
+        If initialise() was not called (e.g., in unit tests), falls back
+        to a synchronous one-off setup — logs a warning.
+        """
+        if self._index is not None:
+            return self._index
+
+        logger.warning(
+            "PineconeClient._get_index called before initialise() — "
+            "performing synchronous fallback init. "
+            "Ensure initialise() is called in the FastAPI lifespan."
+        )
+        self._sync_initialise()
         return self._index
 
     def _make_namespace(self, place_id: str) -> str:
@@ -212,7 +262,8 @@ class PineconeClient:
             place_id, namespace, len(vectors),
         )
         try:
-            loop = asyncio.get_event_loop()
+            # B03 FIX: asyncio.get_running_loop() is the correct API inside async
+            loop = asyncio.get_running_loop()
             count = await loop.run_in_executor(
                 _executor,
                 lambda: self._sync_upsert(vectors, namespace),
@@ -263,7 +314,8 @@ class PineconeClient:
             place_id, namespace, top_k,
         )
         try:
-            loop = asyncio.get_event_loop()
+            # B03 FIX: asyncio.get_running_loop() instead of get_event_loop()
+            loop = asyncio.get_running_loop()
             matches = await loop.run_in_executor(
                 _executor,
                 lambda: self._sync_query(
@@ -294,7 +346,8 @@ class PineconeClient:
             place_id, namespace,
         )
         try:
-            loop = asyncio.get_event_loop()
+            # B03 FIX: asyncio.get_running_loop() instead of get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(
                 _executor,
                 lambda: self._sync_delete_namespace(namespace),
@@ -310,7 +363,8 @@ class PineconeClient:
         """Return current vector count for a place's namespace. Returns 0 on error."""
         namespace = self._make_namespace(place_id)
         try:
-            loop = asyncio.get_event_loop()
+            # B03 FIX: asyncio.get_running_loop() instead of get_event_loop()
+            loop = asyncio.get_running_loop()
             stats = await loop.run_in_executor(
                 _executor,
                 self._sync_describe_index_stats,
