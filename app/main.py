@@ -57,7 +57,7 @@ def custom_openapi():
         routes=app.routes,
     )
 
-    # Replace ALL auto-generated security schemes with a single plain Bearer scheme.
+    # Replace ALL auto-generated security schemes with a single plain Bearer scheme hello.
     # This removes the OAuth2PasswordBearer form and shows only one token input field.
     schema.setdefault("components", {})
     schema["components"]["securitySchemes"] = {
