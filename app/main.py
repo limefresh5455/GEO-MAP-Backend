@@ -63,7 +63,7 @@ def custom_openapi():
     schema["components"]["securitySchemes"] = {
         "BearerAuth": {
             "type": "http",
-            "scheme": "bearer Token",
+            "scheme": "bearer",
             "bearerFormat": "JWT",
             "description": "Enter the JWT token from POST /api/v1/auth/login",
         }
