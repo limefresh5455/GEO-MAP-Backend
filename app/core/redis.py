@@ -1,19 +1,12 @@
 import logging
-
 import redis.asyncio as aioredis
-
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
 _redis_client: aioredis.Redis | None = None
 
 
 def get_redis_client() -> aioredis.Redis:
-    """
-    Return the shared Redis async client.
-    Raises RuntimeError if called before initialise_redis().
-    """
     if _redis_client is None:
         raise RuntimeError(
             "Redis client not initialised. Call initialise_redis() on startup."
@@ -22,7 +15,6 @@ def get_redis_client() -> aioredis.Redis:
 
 
 async def initialise_redis() -> None:
-    """Create the Redis connection. Called from FastAPI lifespan startup."""
     global _redis_client
     try:
         _redis_client = aioredis.Redis(
@@ -46,7 +38,6 @@ async def initialise_redis() -> None:
 
 
 async def close_redis() -> None:
-    """Close the Redis connection. Called from FastAPI lifespan shutdown."""
     global _redis_client
     if _redis_client:
         await _redis_client.aclose()

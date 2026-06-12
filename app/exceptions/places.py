@@ -55,3 +55,16 @@ class UserLocationNotFoundError(HTTPException):
                 "Please update your location using the location update API before searching."
             ),
         )
+
+
+class PlaceDetailNotFoundError(HTTPException):
+    """
+    Raised when a place_id is not found in the local database
+    and Google Places API also returns no result.
+    """
+
+    def __init__(self, place_id: str):
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Place '{place_id}' not found.",
+        )

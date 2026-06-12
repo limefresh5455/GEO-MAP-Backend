@@ -1,10 +1,7 @@
 from logging.config import fileConfig
-
 from sqlalchemy import engine_from_config, pool
-
 from alembic import context
-
-# Load app settings
+# Lod app settings
 from app.core.config import settings
 
 # Import all models so Alembic detects them
@@ -12,6 +9,12 @@ from app.database.base import Base
 from app.models import user          # noqa: F401
 from app.models import user_location # noqa: F401
 from app.models import location_history  # noqa: F401
+from app.models import search_query  # noqa: F401
+from app.models import search_result # noqa: F401
+from app.models import place_detail  # noqa: F401
+from app.models import place_knowledge_sync  # noqa: F401
+from app.models import place_question        # noqa: F401
+from app.models import place_answer_log      # noqa: F401
 
 config = context.config
 

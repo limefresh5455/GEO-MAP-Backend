@@ -1,9 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
-
 import bcrypt
 from jose import JWTError, jwt
-
 from app.core.config import settings
 
 # bcrypt hard limit — passwords longer than 72 bytes are truncated by the algorithm.
@@ -12,10 +10,6 @@ _BCRYPT_MAX_BYTES = 72
 
 
 def _encode(password: str) -> bytes:
-    """
-    Encode password to UTF-8 bytes and enforce the 72-byte bcrypt limit.
-    Using bcrypt directly (no passlib) — avoids the passlib 1.7.4 + bcrypt>=4.0 breakage.
-    """
     encoded = password.encode("utf-8")
     return encoded[:_BCRYPT_MAX_BYTES]
 

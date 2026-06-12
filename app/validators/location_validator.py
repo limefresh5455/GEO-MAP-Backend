@@ -1,6 +1,5 @@
 import math
 from typing import Optional
-
 from app.exceptions.custom_exceptions import InvalidCoordinatesError
 
 # Distance threshold below which two GPS points are considered "the same"
