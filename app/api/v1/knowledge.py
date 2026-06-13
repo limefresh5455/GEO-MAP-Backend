@@ -12,7 +12,9 @@ The place_id must already exist in place_details (call the Details API first).
 
 import logging
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.dependencies.auth import get_current_user
 from app.dependencies.knowledge import get_knowledge_service
@@ -22,11 +24,16 @@ from app.services.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
 
+# Rate limiter — keyed by remote IP, same strategy as place_qa.py
+limiter = Limiter(key_func=get_remote_address)
+
 router = APIRouter(prefix="/places", tags=["Knowledge Sync"])
 
 
 @router.post("/{place_id}/knowledge-sync", response_model=KnowledgeSyncResponse)
+@limiter.limit("5/minute")
 async def sync_place_knowledge(
+    request: Request,
     place_id: str = Path(
         ...,
         min_length=1,
@@ -60,6 +67,10 @@ async def sync_place_knowledge(
     By default (`force_resync: false`), if the place data has not changed since
     the last sync, the endpoint returns immediately with `skipped: true`.
     Set `force_resync: true` to force a full re-embed regardless.
+
+    **Rate limit:** 5 requests per minute per IP.
+    Each sync call embeds up to 7 sections via OpenAI and upserts to Pinecone.
+    The idempotency skip (unchanged data) does not count against this limit.
 
     **Prerequisites:**
     - `GET /api/v1/places/{place_id}/details` must have been called at least once

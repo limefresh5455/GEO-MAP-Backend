@@ -13,7 +13,6 @@ from app.api.v1 import (
     locations,
     place_details,
     place_qa,
-    places,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -23,9 +22,6 @@ api_router.include_router(auth.router)
 
 # Location management routes
 api_router.include_router(locations.router)
-
-# Legacy nearby search (Phase 0)
-api_router.include_router(places.router)
 
 # Discovery routes (Phase 1 - Text Search + Nearby + Router)
 api_router.include_router(discovery.router)

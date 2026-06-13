@@ -417,9 +417,8 @@ class DiscoveryService:
             "Nearby Discovery cache MISS — user=%s → calling Google", user_id
         )
 
-        # GooglePlacesClient returns List[PlaceResult] (existing schema).
-        # We convert to DiscoveryPlaceResult for a unified type contract.
-        raw_places = await self.nearby_client.search_nearby(
+        # GooglePlacesClient now returns List[DiscoveryPlaceResult] directly.
+        places: List[DiscoveryPlaceResult] = await self.nearby_client.search_nearby(
             latitude=latitude,
             longitude=longitude,
             radius=request.radius,
@@ -428,22 +427,6 @@ class DiscoveryService:
                 request.rank_preference.value if request.rank_preference else None
             ),
         )
-
-        places: List[DiscoveryPlaceResult] = [
-            DiscoveryPlaceResult(
-                place_id=p.place_id,
-                display_name=p.display_name,
-                formatted_address=p.formatted_address,
-                latitude=p.latitude,
-                longitude=p.longitude,
-                rating=p.rating,
-                user_rating_count=p.user_rating_count,
-                primary_type=p.primary_type,
-                business_status=p.business_status,
-                google_maps_uri=p.google_maps_uri,
-            )
-            for p in raw_places
-        ]
 
         await self._try_set_cache(cache_key, places)
 

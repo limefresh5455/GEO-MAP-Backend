@@ -22,7 +22,7 @@ from app.exceptions.places import (
     GooglePlacesRateLimitError,
     GooglePlacesTimeoutError,
 )
-from app.schemas.places import PlaceResult
+from app.schemas.discovery import DiscoveryPlaceResult
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +89,11 @@ class GooglePlacesClient:
             payload["rankPreference"] = rank_preference
         return payload
 
-    def _parse_place(self, raw: Dict[str, Any]) -> PlaceResult:
-        """Map a raw Google Places API place object to our PlaceResult schema."""
+    def _parse_place(self, raw: Dict[str, Any]) -> DiscoveryPlaceResult:
+        """Map a raw Google Places API place object to DiscoveryPlaceResult."""
         location = raw.get("location", {})
         display_name = raw.get("displayName", {})
-        return PlaceResult(
+        return DiscoveryPlaceResult(
             place_id=raw.get("id"),
             display_name=(
                 display_name.get("text")
@@ -139,7 +139,7 @@ class GooglePlacesClient:
         radius: float,
         max_result_count: int,
         rank_preference: Optional[str] = None,
-    ) -> List[PlaceResult]:
+    ) -> List[DiscoveryPlaceResult]:
         """
         Call Google Places Nearby Search (New) and return normalised results.
         Raises mapped HTTP exceptions on failure.

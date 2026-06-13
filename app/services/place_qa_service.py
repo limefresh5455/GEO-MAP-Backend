@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import tiktoken
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -77,12 +78,11 @@ _SYSTEM_PROMPT_TEMPLATE = """You are a friendly and knowledgeable local guide wh
 
 Now, answer the user's question in ENGLISH in a friendly, natural, and helpful way based on this context."""
 
-# B051 FIX: Changed from 4 to 3 chars per token for safer budget control.
-# Approximate characters per token (rough estimate for token budget)
-# The tighter ratio (3 instead of 4) provides a safety margin to prevent
-# exceeding the OpenAI context window, especially for technical text with
-# special characters, JSON, or non-ASCII content that tokenizes less efficiently.
-_CHARS_PER_TOKEN = 3
+# Tiktoken encoder for gpt-4o-mini — used for exact token budget enforcement.
+# This replaces the previous _CHARS_PER_TOKEN heuristic (B051 FIX upgraded).
+# tiktoken uses the same BPE tokenizer that OpenAI's models use, so
+# context window budget math is now exact instead of approximate.
+_ENCODER = tiktoken.encoding_for_model("gpt-4o-mini")
 
 
 def _build_structured_facts_block(place) -> str:
@@ -193,17 +193,14 @@ def _compute_confidence(scores: List[float]) -> Optional[float]:
 
 def _estimate_tokens(text: str) -> int:
     """
-    B051 FIX: Improved token estimation for better budget control.
-    
-    Rough token estimate using _CHARS_PER_TOKEN ratio (now 3 chars per token).
-    GPT models use subword tokenization — this is a conservative approximation.
-    
-    For production use, consider using the `tiktoken` library for exact counts:
-      import tiktoken
-      encoding = tiktoken.encoding_for_model("gpt-4")
-      return len(encoding.encode(text))
+    Exact token count using tiktoken BPE encoder for gpt-4o-mini.
+
+    Replaces the previous character-division heuristic (_CHARS_PER_TOKEN = 3).
+    Using the real tokenizer means the context budget in answer_question()
+    is accurate — no silent chunk drops from underestimates, no wasted
+    budget from overestimates.
     """
-    return max(1, len(text) // _CHARS_PER_TOKEN)
+    return max(1, len(_ENCODER.encode(text)))
 
 
 class PlaceQAService:
