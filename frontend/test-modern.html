@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoMap - Connection Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 3rem;
+            max-width: 600px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        
+        h1 {
+            color: #6366f1;
+            margin-bottom: 1rem;
+            font-size: 2rem;
+        }
+        
+        p {
+            color: #6b7280;
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+        
+        .test-section {
+            margin-bottom: 2rem;
+        }
+        
+        .test-title {
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 0.5rem;
+        }
+        
+        .status {
+            padding: 1rem;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+        }
+        
+        .status.loading {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        
+        .status.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .btn {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+        
+        .btn:hover {
+            background: #4f46e5;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+        }
+        
+        .btn-success {
+            background: #10b981;
+        }
+        
+        .btn-success:hover {
+            background: #059669;
+        }
+        
+        .info {
+            background: #f3f4f6;
+            padding: 1rem;
+            border-radius: 10px;
+            font-size: 0.875rem;
+            color: #4b5563;
+        }
+        
+        code {
+            background: #1f2937;
+            color: #10b981;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🗺️ GeoMap Connection Test</h1>
+        <p>Test your backend connection before using the main application.</p>
+        
+        <div class="test-section">
+            <div class="test-title">Backend Status</div>
+            <div id="backendStatus" class="status loading">
+                Testing connection...
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <div class="test-title">API Endpoint</div>
+            <div class="info">
+                <code id="apiUrl">http://localhost:8000/api/v1</code>
+            </div>
+        </div>
+        
+        <div id="successSection" style="display: none;">
+            <a href="app.html">
+                <button class="btn btn-success">
+                    ✅ Open GeoMap Application
+                </button>
+            </a>
+        </div>
+        
+        <div id="errorSection" style="display: none;">
+            <div class="info">
+                <strong>Troubleshooting:</strong><br><br>
+                1. Make sure backend is running:<br>
+                <code>uvicorn app.main:app --reload</code><br><br>
+                2. Check backend is accessible:<br>
+                <code>http://localhost:8000</code><br><br>
+                3. Verify CORS is enabled in backend<br><br>
+                4. Check browser console for errors
+            </div>
+            <br>
+            <button class="btn" onclick="location.reload()">
+                🔄 Retry Test
+            </button>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE_URL = 'http://localhost:8000/api/v1';
+        
+        async function testBackend() {
+            const statusDiv = document.getElementById('backendStatus');
+            
+            try {
+                // Test health endpoint
+                const response = await fetch('http://localhost:8000/', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Backend returned error status');
+                }
+                
+                const data = await response.json();
+                
+                if (data.status === 'ok') {
+                    statusDiv.className = 'status success';
+                    statusDiv.innerHTML = `
+                        ✅ Backend connected successfully!<br>
+                        <small>Service: ${data.service} v${data.version}</small>
+                    `;
+                    document.getElementById('successSection').style.display = 'block';
+                } else {
+                    throw new Error('Unexpected response from backend');
+                }
+            } catch (error) {
+                console.error('Backend test failed:', error);
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = `
+                    ❌ Backend connection failed<br>
+                    <small>${error.message}</small>
+                `;
+                document.getElementById('errorSection').style.display = 'block';
+            }
+        }
+        
+        // Run test on load
+        testBackend();
+    </script>
+</body>
+</html>

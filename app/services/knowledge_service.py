@@ -1,47 +1,3 @@
-"""
-KnowledgeService — builds, chunks, embeds, and indexes place knowledge.
-
-Full pipeline for POST /api/v1/places/{place_id}/knowledge-sync:
-
-  Step 1  Load place details from PostgreSQL (must exist — call Details API first).
-  Step 2  Build a canonical plain-text document divided into named sections.
-  Step 3  Hash the document to check whether re-embedding is needed.
-  Step 4  If hash matches stored source_version and force_resync=False → skip.
-  Step 5  Delete stale vectors from Pinecone namespace (pre-upsert cleanup).
-  Step 6  Chunk the document by section (one chunk per section).
-  Step 7  Filter empty chunks; truncate each to the token budget.
-  Step 8  Batch-embed all chunks via OpenAI text-embedding-3-small.
-  Step 9  Build Pinecone vector dicts with section metadata.
-  Step 10 Upsert vectors into place-scoped Pinecone namespace.
-  Step 11 Persist sync state to place_knowledge_sync table.
-  Step 12 Mark place_details.knowledge_synced = True.
-  Step 13 Commit.
-
-Document schema (7 sections)
------------------------------
-  summary      — display name + address + editorial summary
-  category     — primary type + full types list
-  hours        — weekday descriptions + open_now status
-  contact      — phone, website, Google Maps link
-  ratings      — rating, review count, price level, business status
-  accessibility— wheelchair access flag
-  reviews      — up to 5 review snippets with author + rating
-
-Design rules
-------------
-- Chunking is by section (not by token count) because place documents
-  are small and semantically structured. Each section is a self-contained
-  retrievable unit.
-- Chunk IDs are deterministic: "{place_id}_section_{section_name}"
-  so upserts are idempotent.
-- source_version is SHA-256 of the full document text — unchanged data
-  produces the same hash, allowing skip logic.
-- All DB operations use the repository's flush pattern; commit is called
-  once at the end of a successful sync.
-- Failures are caught, logged, written to sync state, and re-raised so
-  the HTTP layer returns a clean error response.
-"""
-
 import hashlib
 import logging
 from datetime import datetime, timezone
@@ -81,17 +37,6 @@ def _safe_str(value: Any, fallback: str = "") -> str:
 
 
 def build_place_document(place: PlaceDetail) -> Dict[str, str]:
-    """
-    Build a dictionary of named text sections from a PlaceDetail ORM row.
-    Each section becomes one Pinecone vector.
-
-    Returns
-    -------
-    Dict[section_name -> text] — sections with empty text are excluded
-    by the caller.
-    
-    B-053 FIX: Safe dict access for opening_hours to prevent AttributeError.
-    """
     sections: Dict[str, str] = {}
 
     # ------------------------------------------------------------------

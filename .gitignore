@@ -13,3 +13,7 @@ build/
 .vscode/
 *.sqlite3
 venv
+
+# Logs directory
+logs/
+*.log

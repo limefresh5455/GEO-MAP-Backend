@@ -30,15 +30,94 @@ class NearbyRankPreference(str, Enum):
     DISTANCE = "DISTANCE"
 
 
+class PredefinedPlaceType(str, Enum):
+    """
+    Predefined place types for quick discovery in Nearby Search.
+    These are the most commonly searched place categories.
+    """
+    # Religious places
+    TEMPLE = "hindu_temple"               # Hindu temples
+    MOSQUE = "mosque"                      # Mosques
+    CHURCH = "church"                      # Churches
+    
+    # Food & Dining
+    RESTAURANT = "restaurant"              # Restaurants
+    CAFE = "cafe"                          # Cafes and coffee shops
+    BAR = "bar"                            # Bars and pubs
+    BAKERY = "bakery"                      # Bakeries
+    MEAL_TAKEAWAY = "meal_takeaway"        # Takeaway food
+    
+    # Tourist & Famous Places
+    TOURIST_ATTRACTION = "tourist_attraction"  # Famous places, landmarks
+    MUSEUM = "museum"                      # Museums
+    ART_GALLERY = "art_gallery"            # Art galleries
+    ZOO = "zoo"                            # Zoos
+    AQUARIUM = "aquarium"                  # Aquariums
+    AMUSEMENT_PARK = "amusement_park"      # Amusement parks
+    
+    # Nature & Outdoors
+    PARK = "park"                          # Parks and gardens
+    NATIONAL_PARK = "national_park"        # National parks and forests
+    CAMPGROUND = "campground"              # Camping areas
+    HIKING_AREA = "hiking_area"            # Hiking trails
+    
+    # Shopping
+    SHOPPING_MALL = "shopping_mall"        # Malls and shopping centers
+    STORE = "store"                        # Stores
+    SUPERMARKET = "supermarket"            # Supermarkets
+    CONVENIENCE_STORE = "convenience_store"  # Convenience stores
+    
+    # Healthcare
+    HOSPITAL = "hospital"                  # Hospitals
+    DOCTOR = "doctor"                      # Doctors
+    PHARMACY = "pharmacy"                  # Medical stores
+    DENTIST = "dentist"                    # Dentists
+    
+    # Finance
+    BANK = "bank"                          # Banks
+    ATM = "atm"                            # ATMs
+    
+    # Transportation
+    GAS_STATION = "gas_station"            # Petrol pumps
+    PARKING = "parking"                    # Parking areas
+    AIRPORT = "airport"                    # Airports
+    BUS_STATION = "bus_station"            # Bus stations
+    TRAIN_STATION = "train_station"        # Railway stations
+    TAXI_STAND = "taxi_stand"              # Taxi stands
+    
+    # Accommodation
+    HOTEL = "lodging"                      # Hotels and lodging
+    
+    # Fitness & Recreation
+    GYM = "gym"                            # Gyms and fitness centers
+    SPORTS_COMPLEX = "sports_complex"      # Sports facilities
+    STADIUM = "stadium"                    # Stadiums
+    
+    # Education
+    SCHOOL = "school"                      # Schools
+    UNIVERSITY = "university"              # Universities
+    LIBRARY = "library"                    # Libraries
+    
+    # Entertainment
+    MOVIE_THEATER = "movie_theater"        # Cinema halls
+    NIGHT_CLUB = "night_club"              # Night clubs
+    CASINO = "casino"                      # Casinos
+    
+    # Emergency Services
+    POLICE = "police"                      # Police stations
+    FIRE_STATION = "fire_station"          # Fire stations
+    
+    @classmethod
+    def get_all_types(cls) -> List[str]:
+        """Return all predefined place type values."""
+        return [t.value for t in cls]
+
+
 # ---------------------------------------------------------------------------
 # Shared sub-objects
 # ---------------------------------------------------------------------------
 
 class LocationBias(BaseModel):
-    """
-    Optional location hint for text search.
-    Acts as a soft preference — results outside the area can still appear.
-    """
     latitude: float = Field(..., ge=-90.0, le=90.0)
     longitude: float = Field(..., ge=-180.0, le=180.0)
     radius: float = Field(default=5000.0, ge=1.0, le=50000.0,
@@ -50,13 +129,6 @@ class LocationBias(BaseModel):
 # ---------------------------------------------------------------------------
 
 class TextSearchRequest(BaseModel):
-    """
-    Payload for POST /api/v1/discovery/text-search.
-
-    text_query is the only required field.
-    All other fields are optional refinements passed to Google.
-    """
-
     text_query: str = Field(
         ...,
         min_length=1,
@@ -104,10 +176,6 @@ class TextSearchRequest(BaseModel):
     @field_validator("text_query")
     @classmethod
     def sanitize_text_query(cls, v: str) -> str:
-        """
-        B-025 FIX: Basic sanitization to prevent SQL injection and XSS.
-        Remove potentially dangerous characters while preserving search intent.
-        """
         if not v or not v.strip():
             raise ValueError("text_query must not be empty")
         
@@ -131,11 +199,6 @@ class TextSearchRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class NearbyDiscoveryRequest(BaseModel):
-    """
-    Payload for POST /api/v1/discovery/nearby-search.
-    Coordinates are resolved server-side from the user's saved location.
-    """
-
     radius: float = Field(
         default=500.0,
         ge=1.0,
@@ -150,16 +213,64 @@ class NearbyDiscoveryRequest(BaseModel):
     )
     included_types: Optional[List[str]] = Field(
         default=None,
-        description="Google place type filters, e.g. ['restaurant', 'cafe']",
+        description=(
+            "Google place type filters as an array, e.g. ['restaurant', 'cafe']. "
+            "MUST be an array, not a string. "
+            "You can use predefined types like 'temple', 'shopping_mall', "
+            "'tourist_attraction', 'restaurant', 'hospital', etc. "
+            "See PredefinedPlaceType enum for all available types. "
+            "Only used when use_predefined_types is false."
+        ),
     )
     excluded_types: Optional[List[str]] = Field(
         default=None,
-        description="Place types to exclude from results",
+        description="Place types to exclude from results (must be an array)",
     )
     rank_preference: Optional[NearbyRankPreference] = Field(
         default=None,
         description="POPULARITY (default) or DISTANCE",
     )
+    use_predefined_types: bool = Field(
+        default=False,
+        description=(
+            "When True, automatically searches for popular place categories: "
+            "temples, tourist attractions, shopping malls, restaurants, cafes, "
+            "parks, national parks, and hospitals. "
+            "This overrides included_types if both are provided. "
+            "Perfect for general discovery without specifying types manually."
+        ),
+    )
+    
+    @field_validator("included_types", "excluded_types")
+    @classmethod
+    def validate_types_array(cls, v: Optional[List[str]], info) -> Optional[List[str]]:
+        """Ensure types are provided as array, not string."""
+        if v is None:
+            return v
+        
+        # If it's a string, try to parse it
+        if isinstance(v, str):
+            # Try to parse as comma-separated
+            parsed = [t.strip() for t in v.split(",") if t.strip()]
+            if parsed:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"{info.field_name} received as string, converted to array: {parsed}"
+                )
+                return parsed
+            return None
+        
+        # Ensure it's actually a list
+        if not isinstance(v, list):
+            raise ValueError(f"{info.field_name} must be an array of strings, not {type(v)}")
+        
+        # Validate each element is a string
+        for item in v:
+            if not isinstance(item, str):
+                raise ValueError(f"Each type in {info.field_name} must be a string")
+        
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -167,13 +278,6 @@ class NearbyDiscoveryRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class DiscoverySearchRequest(BaseModel):
-    """
-    Payload for POST /api/v1/discovery/search.
-
-    The backend inspects query and other fields to decide whether to
-    call Text Search or Nearby Search — the frontend does not need to know.
-    """
-
     query: Optional[str] = Field(
         default=None,
         max_length=500,
@@ -211,8 +315,6 @@ class DiscoverySearchRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class DiscoveryPlaceResult(BaseModel):
-    """Normalised single place as returned to the frontend from any search mode."""
-
     place_id: Optional[str] = None
     display_name: Optional[str] = None
     formatted_address: Optional[str] = None
@@ -225,6 +327,78 @@ class DiscoveryPlaceResult(BaseModel):
     business_status: Optional[str] = None
     google_maps_uri: Optional[str] = None
     open_now: Optional[bool] = None            # from currentOpeningHours if requested
+    
+    # Phase 4: New fields for richer search cards
+    price_level: Optional[str] = Field(
+        default=None,
+        description=(
+            "Price range indicator from Google. Values: PRICE_LEVEL_FREE, "
+            "PRICE_LEVEL_INEXPENSIVE, PRICE_LEVEL_MODERATE, PRICE_LEVEL_EXPENSIVE, "
+            "PRICE_LEVEL_VERY_EXPENSIVE. Frontend can map to symbols like $, $$, $$$, $$$$."
+        ),
+    )
+    first_photo_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Resource name of the first photo for thumbnail preview "
+            "(e.g. 'places/ChIJ.../photos/AUac...'). "
+            "Call GET /api/v1/places/{place_id}/photos to resolve to CDN URL, "
+            "or resolve directly via Places Photos API with this resource name."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Autocomplete (Phase 2)
+# ---------------------------------------------------------------------------
+
+class AutocompleteRequest(BaseModel):
+    input: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Partial search query (e.g. 'bur' → suggests 'Burj Khalifa')",
+    )
+    included_primary_types: Optional[List[str]] = Field(
+        default=None,
+        description="Filter predictions by place types (e.g. ['restaurant', 'cafe'])",
+    )
+    language_code: str = Field(
+        default="en",
+        max_length=10,
+        description="Preferred language for results (ISO 639-1 code)",
+    )
+    use_user_location_bias: bool = Field(
+        default=True,
+        description=(
+            "When True, prioritizes predictions near the user's saved location. "
+            "If user has no saved location, Google uses IP-based biasing."
+        ),
+    )
+
+
+class AutocompletePrediction(BaseModel):
+    """A single autocomplete prediction returned by Google."""
+
+    place_id: str = Field(description="Stable Google place ID")
+    main_text: str = Field(description="Primary display text (e.g. 'Burj Khalifa')")
+    secondary_text: str = Field(description="Secondary display text (e.g. 'Dubai, UAE')")
+    full_text: str = Field(description="Complete description (main + secondary)")
+    types: List[str] = Field(description="Place type tags (e.g. ['tourist_attraction'])")
+
+
+class AutocompleteResponse(BaseModel):
+    """Standard envelope for GET /api/v1/discovery/autocomplete."""
+
+    success: bool
+    message: str
+    input: str                                 # echoed input for client verification
+    predictions: List[AutocompletePrediction]
+    total_predictions: int
+    cached: bool
+    bias_latitude: Optional[float] = None      # user location used as bias (if any)
+    bias_longitude: Optional[float] = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +438,6 @@ class NearbyDiscoveryResponse(BaseModel):
 
 class DiscoverySearchResponse(BaseModel):
     """Standard envelope for POST /api/v1/discovery/search (router)."""
-
     success: bool
     search_mode: str                           # "text" or "nearby"
     message: str

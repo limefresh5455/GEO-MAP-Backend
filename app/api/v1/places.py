@@ -21,24 +21,17 @@ async def nearby_search(
     service: PlacesService = Depends(get_places_service),
 ):
     """
-    Search for all nearby places around the authenticated user's saved location.
-
-    The frontend does NOT send coordinates.
-    The backend reads the user's latest saved location from PostgreSQL.
-
-    Priority:
-      1. Latest active location (is_current=True, is_active=True)
-         — regardless of whether it was set via GPS or manual update
-      2. No location → HTTP 404 with instructions to update location first
-
-    Cache strategy:
-      - Redis cache-aside pattern
-      - TTL: 60 minutes
-      - Key: nearby:{user_id}:{lat}:{lon}:{radius}:{max_result_count}
-      - Location change → new cache entry automatically
-
-    Returns all place types — no category restriction.
-    Requires: Authorization: Bearer <token>
+    Search all nearby places around user's saved location.
+    
+    **Request body:**
+    ```json
+    {
+      "radius": 5000,
+      "max_result_count": 20
+    }
+    ```
+    
+    Returns all place types. Cached for 60 minutes.
     """
     logger.info(
         "Nearby search request — user_id: %s, radius: %sm, max: %s",

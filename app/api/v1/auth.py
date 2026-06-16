@@ -38,13 +38,21 @@ def _user_to_response(user: User) -> UserResponse:
     )
 
 
-@router.post(
-    "/signup",
-    response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/minute")
 async def signup(request: Request, payload: SignupRequest, db: Session = Depends(get_db)):
+    """
+    Register new user.
+    
+    **Request body:**
+    ```json
+    {
+      "full_name": "John Doe",
+      "email": "john@example.com",
+      "password": "SecurePass@123"
+    }
+    ```
+    """
     # B-021 FIX: Use try-except to catch IntegrityError on race condition
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
@@ -79,6 +87,17 @@ async def signup(request: Request, payload: SignupRequest, db: Session = Depends
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("10/minute")
 async def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)):
+    """
+    Login and get access token.
+    
+    **Request body:**
+    ```json
+    {
+      "email": "john@example.com",
+      "password": "SecurePass@123"
+    }
+    ```
+    """
     user = db.query(User).filter(User.email == payload.email).first()
 
     if not user:
@@ -108,7 +127,7 @@ async def login(request: Request, payload: LoginRequest, db: Session = Depends(g
 
 @router.post("/logout", response_model=MessageResponse)
 def logout(current_user: User = Depends(get_current_user)):
-    
+    """Logout (client-side token invalidation)."""
     return MessageResponse(
         message=f"User '{current_user.email}' logged out successfully"
     )
@@ -116,5 +135,5 @@ def logout(current_user: User = Depends(get_current_user)):
 
 @router.get("/me", response_model=UserResponse)
 def get_me(current_user: User = Depends(get_current_user)):
-    """Retrieve the currently authenticated user's profile."""
+    """Get current authenticated user's profile."""
     return _user_to_response(current_user)

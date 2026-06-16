@@ -1,16 +1,3 @@
-"""
-Location service — GPS and manual location management.
-
-B09 FIX: Race condition on concurrent GPS updates handled via DB-level
-  IntegrityError catching. A partial unique index on user_locations
-  (user_id) WHERE is_current=True enforces the single-current-location
-  invariant at the database level. The service catches IntegrityError and
-  retries once, making concurrent pings safe.
-
-  The migration for this index is:
-  alembic/versions/  (see Phase B migration file)
-"""
-
 import logging
 from typing import Optional, Tuple
 
@@ -31,11 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 class LocationService:
-    """
-    Enforces all business rules for location management.
-    Delegates DB operations to LocationRepository.
-    """
-
     def __init__(self, db: Session):
         self.db = db
         self.repo = LocationRepository(db)
@@ -47,10 +29,7 @@ class LocationService:
     def _do_gps_write(
         self, user_id: int, payload: GPSUpdateRequest
     ) -> Tuple[UserLocation, bool]:
-        """
-        Core write path for GPS update — extracted so it can be retried
-        once on IntegrityError (B09: race condition guard).
-        """
+    
         existing = self.repo.get_current_location(user_id)
 
         if existing and is_duplicate_location(
@@ -93,23 +72,7 @@ class LocationService:
     def process_gps_update(
         self, user_id: int, payload: GPSUpdateRequest
     ) -> Tuple[UserLocation, bool]:
-        """
-        Core GPS update logic:
-        1. Validate coordinates.
-        2. Check for duplicate (within 10m Haversine threshold).
-        3. Deactivate previous current location.
-        4. Create new current location record.
-        5. Write history entry.
-        6. Commit.
-
-        Returns (UserLocation, is_duplicate).
-
-        B09 FIX: If two concurrent requests both pass the duplicate check and
-        both try to insert is_current=True, the DB partial unique index raises
-        IntegrityError on the second insert. We catch it, rollback, and retry
-        once — the retry will find the winner's row as the existing location
-        and detect it as a duplicate (within 10m) or create a fresh one safely.
-        """
+        
         validate_coordinates(payload.latitude, payload.longitude)
         validate_accuracy(payload.accuracy)
 
@@ -143,14 +106,7 @@ class LocationService:
     def process_manual_update(
         self, user_id: int, payload: ManualUpdateRequest
     ) -> UserLocation:
-        """
-        Manual location update:
-        1. Validate coordinates.
-        2. Deactivate previous current.
-        3. Create new current location with source='manual'.
-        4. Write history entry.
-        5. Commit.
-        """
+        
         validate_coordinates(payload.latitude, payload.longitude)
         validate_accuracy(payload.accuracy)
 

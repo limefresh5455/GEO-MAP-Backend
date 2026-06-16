@@ -1,51 +1,11 @@
-"""
-DiscoveryService — orchestrates all search flows.
-
-Responsibilities
-----------------
-1. Text Search flow
-   - Resolve user location from DB (optional soft bias)
-   - Build a Redis cache key
-   - Check Redis; on hit return immediately
-   - On miss: call GoogleTextSearchClient
-   - Write result to Redis
-   - Persist audit rows to PostgreSQL (search_queries + search_results)
-   - Return (places, from_cache, lat, lon)
-
-2. Nearby Search flow
-   - Resolve user location from DB (required — raises 404 if absent)
-   - Build a Redis cache key (re-uses nearby: prefix for consistency)
-   - Check Redis; on hit return immediately
-   - On miss: call GooglePlacesClient (the existing nearby client)
-   - Write result to Redis
-   - Persist audit rows to PostgreSQL
-   - Return (places, from_cache, lat, lon)
-
-3. Discovery Router flow
-   - Inspect the incoming query string
-   - Apply routing rules (see _choose_mode docstring)
-   - Delegate to text or nearby path
-   - Attach resolved_mode to the audit row
-
-Design rules
-------------
-- Service never raises HTTP exceptions that are not already raised by
-  the integration clients.  Business logic 404 (no saved location) is
-  delegated to UserLocationNotFoundError (already in exceptions/places.py).
-- DB commit is done here (not in the repository) so the whole
-  search + audit write is one atomic transaction.
-- Redis failures are logged but never crash the request (cache is advisory).
-"""
-
 import hashlib
 import json
 import logging
 import re
-from typing import List, Optional, Tuple
-
+from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
-
 from app.exceptions.places import UserLocationNotFoundError
+from app.integrations.google_autocomplete import GoogleAutocompleteClient
 from app.integrations.google_places import GooglePlacesClient
 from app.integrations.google_text_search import GoogleTextSearchClient
 from app.models.user_location import UserLocation
@@ -84,18 +44,7 @@ def _build_text_cache_key(
     min_rating: Optional[float],
     rank_preference: Optional[str],
 ) -> str:
-    """
-    Deterministic Redis key for a text search request.
-
-    We hash the full parameter set so the key stays short regardless of
-    how long the query string is.  The user_id prefix prevents cross-user
-    cache collision (different users may have different saved locations).
-
-    Coordinates are rounded to 4 decimal places (~11m precision) to prevent
-    GPS noise from creating unnecessary cache misses.
-
-    Format: text_search:{user_id}:{sha256_hex[:16]}
-    """
+    
     lat_str = f"{round(bias_lat, 4)}" if bias_lat is not None else "none"
     lon_str = f"{round(bias_lon, 4)}" if bias_lon is not None else "none"
     raw = (
@@ -113,49 +62,53 @@ def _build_nearby_cache_key(
     radius: float,
     max_result_count: int,
 ) -> str:
-    """
-    Nearby cache key — identical format to the existing nearby-search key
-    so they share the same TTL strategy.
-    
-    Coordinates rounded to 4 decimal places (~11m precision) to reduce
-    cache misses from GPS noise.
-    """
     lat = round(latitude, 4)
     lon = round(longitude, 4)
     return f"nearby:{user_id}:{lat}:{lon}:{radius}:{max_result_count}"
 
 
-class DiscoveryService:
-    """
-    Orchestrates text search, nearby search, and the discovery router.
-    Accepts injected clients and repositories so it is fully unit-testable.
-    """
+def _build_autocomplete_cache_key(
+    user_id: int,
+    input_text: str,
+    bias_lat: Optional[float],
+    bias_lon: Optional[float],
+    included_types: Optional[List[str]],
+    language_code: str,
+) -> str:
+    
+    lat_str = f"{round(bias_lat, 4)}" if bias_lat is not None else "none"
+    lon_str = f"{round(bias_lon, 4)}" if bias_lon is not None else "none"
+    types_str = ",".join(sorted(included_types)) if included_types else "none"
+    raw = f"{input_text.lower().strip()}|{lat_str}|{lon_str}|{types_str}|{language_code}"
+    digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
+    return f"autocomplete:{user_id}:{digest}"
 
+
+class DiscoveryService:
     def __init__(
         self,
         db: Session,
         redis_repo: RedisRepository,
         text_client: GoogleTextSearchClient,
         nearby_client: GooglePlacesClient,
+        autocomplete_client: GoogleAutocompleteClient,
     ) -> None:
         self.db = db
         self.redis_repo = redis_repo
         self.text_client = text_client
         self.nearby_client = nearby_client
+        self.autocomplete_client = autocomplete_client
         self.search_repo = SearchRepository(db)
         # Explicit TTL for search result caches (1 hour by default)
         from app.core.config import settings
         self._search_cache_ttl = settings.REDIS_CACHE_TTL
+        self._autocomplete_cache_ttl = settings.REDIS_AUTOCOMPLETE_CACHE_TTL
 
     # ------------------------------------------------------------------
     # Internal: resolve user's current location from DB
     # ------------------------------------------------------------------
 
     def _get_user_location(self, user_id: int) -> Optional[UserLocation]:
-        """
-        Fetch the active current location for a user.
-        Returns None (not raises) so callers can decide whether it is required.
-        """
         return (
             self.db.query(UserLocation)
             .filter(
@@ -211,11 +164,6 @@ class DiscoveryService:
         places: List[DiscoveryPlaceResult],
         from_cache: bool,
     ) -> None:
-        """
-        Write search_query + search_results rows inside one transaction.
-        Commit is called here.  On any DB error, log and swallow — a failed
-        audit write must never break the user-facing response.
-        """
         try:
             query_row = self.search_repo.create_search_query(
                 user_id=user_id,
@@ -235,9 +183,6 @@ class DiscoveryService:
             )
             self.db.commit()
         except Exception as exc:
-            # B045 FIX: Changed from logger.error to logger.critical for audit failures.
-            # Audit trail is critical for compliance, debugging, and billing analysis.
-            # Silent failures here mean lost data for important business metrics.
             logger.critical(
                 "AUDIT PERSIST FAILED — search data lost (user=%s mode=%s query=%r): %s",
                 user_id, search_mode, raw_query, exc, exc_info=True
@@ -253,14 +198,6 @@ class DiscoveryService:
         request: TextSearchRequest,
         user_id: int,
     ) -> Tuple[List[DiscoveryPlaceResult], bool, Optional[float], Optional[float]]:
-        """
-        Execute a text search and return (places, from_cache, lat, lon).
-
-        Location bias logic (priority order):
-          1. Explicit location_bias in the request payload.
-          2. User's saved location (when use_user_location_as_bias=True).
-          3. No bias → Google uses IP-based biasing.
-        """
         # Resolve bias coordinates
         bias_lat: Optional[float] = None
         bias_lon: Optional[float] = None
@@ -368,11 +305,6 @@ class DiscoveryService:
         request: NearbyDiscoveryRequest,
         user_id: int,
     ) -> Tuple[List[DiscoveryPlaceResult], bool, float, float]:
-        """
-        Execute a geo-bounded nearby search.
-        Raises UserLocationNotFoundError if user has no saved location.
-        Returns (places, from_cache, lat, lon).
-        """
         # Location is mandatory for nearby search
         loc = self._get_user_location(user_id)
         if loc is None:
@@ -383,6 +315,46 @@ class DiscoveryService:
 
         latitude = loc.latitude
         longitude = loc.longitude
+
+        # Handle predefined types
+        included_types = request.included_types
+        if request.use_predefined_types:
+            # Use default popular categories including temples, restaurants, malls, 
+            # cafes, famous places, and nature areas (forests/parks)
+            from app.schemas.discovery import PredefinedPlaceType
+            included_types = [
+                # Religious places
+                PredefinedPlaceType.TEMPLE.value,
+                # Tourist attractions & famous places
+                PredefinedPlaceType.TOURIST_ATTRACTION.value,
+                # Nature & outdoors (forests, parks)
+                PredefinedPlaceType.PARK.value,
+                PredefinedPlaceType.NATIONAL_PARK.value,
+                # Shopping
+                PredefinedPlaceType.SHOPPING_MALL.value,
+                # Food & Dining
+                PredefinedPlaceType.RESTAURANT.value,
+                PredefinedPlaceType.CAFE.value,
+                # Healthcare
+                PredefinedPlaceType.HOSPITAL.value,
+            ]
+            logger.info(
+                "Using predefined place types for user_id %s: %s", user_id, included_types
+            )
+        else:
+            # B-032 FIX: Ensure included_types is a list, not a string
+            if included_types is not None:
+                if isinstance(included_types, str):
+                    # If it's a string, split it by comma
+                    included_types = [t.strip() for t in included_types.split(",") if t.strip()]
+                    logger.warning(
+                        "included_types was a string, converted to list: %s", included_types
+                    )
+                elif not isinstance(included_types, list):
+                    logger.error(
+                        "included_types has invalid type %s, ignoring", type(included_types)
+                    )
+                    included_types = None
 
         cache_key = _build_nearby_cache_key(
             user_id=user_id,
@@ -426,6 +398,8 @@ class DiscoveryService:
             rank_preference=(
                 request.rank_preference.value if request.rank_preference else None
             ),
+            included_types=included_types,
+            excluded_types=request.excluded_types,
         )
 
         await self._try_set_cache(cache_key, places)
@@ -449,14 +423,6 @@ class DiscoveryService:
     # ------------------------------------------------------------------
 
     def _choose_mode(self, query: Optional[str]) -> str:
-        """
-        Determine search mode from the user's query string.
-
-        Rules (applied in order):
-          1. No query → "nearby"  (pure location browse)
-          2. Query matches geo-signal pattern → "nearby"
-          3. Query is free-text → "text"
-        """
         if not query or not query.strip():
             return "nearby"
         if _NEARBY_SIGNAL_PATTERN.search(query):
@@ -468,12 +434,6 @@ class DiscoveryService:
         request: DiscoverySearchRequest,
         user_id: int,
     ) -> Tuple[List[DiscoveryPlaceResult], bool, str, Optional[float], Optional[float]]:
-        """
-        Unified entry point for the frontend.
-
-        Returns (places, from_cache, resolved_mode, lat, lon).
-        `resolved_mode` tells the caller which path actually ran.
-        """
         mode = self._choose_mode(request.query)
         logger.info(
             "Discovery Router — user=%s query=%r → mode=%s",
@@ -510,3 +470,79 @@ class DiscoveryService:
             )
             places, from_cache, lat, lon = await self.nearby_search(nearby_req, user_id)
             return places, from_cache, "nearby", lat, lon
+
+    # ------------------------------------------------------------------
+    # 4. Autocomplete (Phase 2)
+    # ------------------------------------------------------------------
+
+    async def autocomplete(
+        self,
+        input_text: str,
+        user_id: int,
+        included_primary_types: Optional[List[str]] = None,
+        language_code: str = "en",
+        use_user_location_bias: bool = True,
+    ) -> Tuple[List[Dict[str, Any]], bool, Optional[float], Optional[float]]:
+
+        # Resolve bias coordinates
+        bias_lat: Optional[float] = None
+        bias_lon: Optional[float] = None
+        bias_radius: Optional[float] = None
+
+        if use_user_location_bias:
+            loc = self._get_user_location(user_id)
+            if loc:
+                bias_lat = loc.latitude
+                bias_lon = loc.longitude
+                bias_radius = 5000.0  # 5km bias radius for autocomplete
+                logger.debug(
+                    "Autocomplete bias: user saved location (%s, %s)",
+                    bias_lat, bias_lon,
+                )
+            else:
+                logger.info(
+                    "Autocomplete for user %s: no saved location, Google uses IP bias",
+                    user_id,
+                )
+
+        # Build cache key
+        cache_key = _build_autocomplete_cache_key(
+            user_id=user_id,
+            input_text=input_text,
+            bias_lat=bias_lat,
+            bias_lon=bias_lon,
+            included_types=included_primary_types,
+            language_code=language_code,
+        )
+
+        # Redis check — cache returns raw list of dicts
+        cached_predictions = await self.redis_repo.get(cache_key)
+        if cached_predictions is not None:
+            logger.info(
+                "Autocomplete cache HIT — user=%s input=%r", user_id, input_text
+            )
+            return cached_predictions, True, bias_lat, bias_lon
+
+        # Cache miss → call Google
+        logger.info(
+            "Autocomplete cache MISS — user=%s input=%r → calling Google",
+            user_id, input_text,
+        )
+        predictions = await self.autocomplete_client.autocomplete(
+            input_text=input_text,
+            location_bias_lat=bias_lat,
+            location_bias_lon=bias_lon,
+            location_bias_radius=bias_radius,
+            included_primary_types=included_primary_types,
+            language_code=language_code,
+        )
+
+        # Write to cache (shorter TTL — 5 minutes)
+        try:
+            await self.redis_repo.set(
+                cache_key, predictions, ttl=self._autocomplete_cache_ttl
+            )
+        except Exception as exc:
+            logger.warning("Autocomplete cache write failed for key %s: %s", cache_key, exc)
+
+        return predictions, False, bias_lat, bias_lon

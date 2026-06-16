@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoMap - Discover & Explore Places</title>
+    <link rel="stylesheet" href="css/modern-style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loadingScreen" class="loading-screen">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <p>Loading...</p>
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar" id="navbar" style="display: none;">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <i class="fas fa-map-marked-alt"></i>
+                <span>GeoMap</span>
+            </div>
+            <div class="nav-menu">
+                <button class="nav-btn" data-section="search" title="Search Places">
+                    <i class="fas fa-search"></i>
+                </button>
+                <button class="nav-btn" data-section="discover" title="Discover">
+                    <i class="fas fa-compass"></i>
+                </button>
+                <button class="nav-btn" data-section="location" title="Location">
+                    <i class="fas fa-map-marker-alt"></i>
+                </button>
+                <div class="nav-user">
+                    <button class="user-btn" id="userMenuBtn">
+                        <i class="fas fa-user-circle"></i>
+                        <span id="userName">User</span>
+                    </button>
+                    <div class="user-dropdown" id="userDropdown">
+                        <button class="dropdown-item" id="logoutBtn">
+                            <i class="fas fa-sign-out-alt"></i> Logout
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Container -->
+    <div class="app-container">
+        <!-- Auth Screen -->
+        <div class="screen" id="authScreen">
+            <div class="auth-container">
+                <div class="auth-card">
+                    <div class="auth-header">
+                        <i class="fas fa-map-marked-alt auth-logo"></i>
+                        <h1>Welcome to GeoMap</h1>
+                        <p>Discover amazing places around you</p>
+                    </div>
+
+                    <div class="auth-tabs">
+                        <button class="auth-tab active" data-tab="login">Login</button>
+                        <button class="auth-tab" data-tab="signup">Sign Up</button>
+                    </div>
+
+                    <!-- Login Form -->
+                    <form class="auth-form" id="loginForm">
+                        <div class="form-group">
+                            <i class="fas fa-envelope form-icon"></i>
+                            <input type="email" id="loginEmail" placeholder="Email" required>
+                        </div>
+                        <div class="form-group">
+                            <i class="fas fa-lock form-icon"></i>
+                            <input type="password" id="loginPassword" placeholder="Password" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <span>Login</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </button>
+                    </form>
+
+                    <!-- Signup Form -->
+                    <form class="auth-form" id="signupForm" style="display: none;">
+                        <div class="form-group">
+                            <i class="fas fa-user form-icon"></i>
+                            <input type="text" id="signupName" placeholder="Full Name" required>
+                        </div>
+                        <div class="form-group">
+                            <i class="fas fa-envelope form-icon"></i>
+                            <input type="email" id="signupEmail" placeholder="Email" required>
+                        </div>
+                        <div class="form-group">
+                            <i class="fas fa-lock form-icon"></i>
+                            <input type="password" id="signupPassword" placeholder="Password (min 6 characters)" required minlength="6">
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <span>Create Account</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Location Confirmation Screen -->
+        <div class="screen" id="locationScreen" style="display: none;">
+            <div class="location-container">
+                <div class="location-card">
+                    <div class="location-header">
+                        <i class="fas fa-map-marker-alt location-icon"></i>
+                        <h2>Confirm Your Location</h2>
+                        <p>We need your location to find places near you</p>
+                    </div>
+
+                    <div class="location-options">
+                        <button class="location-btn" id="useGPSBtn">
+                            <i class="fas fa-crosshairs"></i>
+                            <span>Use Current Location</span>
+                        </button>
+                        
+                        <div class="divider">
+                            <span>OR</span>
+                        </div>
+
+                        <form id="manualLocationForm">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Latitude</label>
+                                    <input type="number" id="manualLat" placeholder="40.7128" step="0.0001" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Longitude</label>
+                                    <input type="number" id="manualLng" placeholder="-74.0060" step="0.0001" required>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-secondary">
+                                <span>Set Location</span>
+                                <i class="fas fa-check"></i>
+                            </button>
+                        </form>
+                    </div>
+
+                    <div class="location-status" id="locationStatus" style="display: none;">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Location confirmed</span>
+                        <div class="coords" id="locationCoords"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main App Screen -->
+        <div class="screen" id="appScreen" style="display: none;">
+            <!-- Search Section -->
+            <section class="app-section active" id="searchSection">
+                <div class="section-header">
+                    <h2>Search Places</h2>
+                    <p>Choose your search method</p>
+                </div>
+
+                <div class="search-options">
+                    <div class="search-option-card" id="nearbySearchCard">
+                        <div class="option-icon">
+                            <i class="fas fa-location-arrow"></i>
+                        </div>
+                        <h3>Nearby Search</h3>
+                        <p>Find places around your location</p>
+                        <button class="btn btn-primary" id="nearbySearchBtn">
+                            <span>Start Search</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </button>
+                    </div>
+
+                    <div class="search-option-card" id="textSearchCard">
+                        <div class="option-icon">
+                            <i class="fas fa-search"></i>
+                        </div>
+                        <h3>Text Query Search</h3>
+                        <p>Search by keywords or place name</p>
+                        <button class="btn btn-primary" id="textSearchBtn">
+                            <span>Start Search</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Nearby Search Modal -->
+                <div class="modal" id="nearbyModal">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3>Nearby Search</h3>
+                            <button class="modal-close" data-modal="nearbyModal">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <form id="nearbySearchForm">
+                            <div class="form-group">
+                                <label>Place Type</label>
+                                <select id="nearbyType" required>
+                                    <option value="">Select type...</option>
+                                    <option value="restaurant">🍽️ Restaurants</option>
+                                    <option value="cafe">☕ Cafes</option>
+                                    <option value="bar">🍺 Bars</option>
+                                    <option value="museum">🏛️ Museums</option>
+                                    <option value="park">🌳 Parks</option>
+                                    <option value="shopping_mall">🛍️ Shopping Malls</option>
+                                    <option value="hospital">🏥 Hospitals</option>
+                                    <option value="bank">🏦 Banks</option>
+                                    <option value="gym">💪 Gyms</option>
+                                    <option value="hotel">🏨 Hotels</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Radius (meters)</label>
+                                <input type="range" id="nearbyRadius" min="500" max="50000" value="5000" step="500">
+                                <span id="radiusValue">5000m</span>
+                            </div>
+                            <div class="form-group">
+                                <label>Max Results</label>
+                                <input type="number" id="nearbyMaxResults" min="5" max="20" value="10">
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-block">
+                                <span>Search</span>
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Text Search Modal -->
+                <div class="modal" id="textModal">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3>Text Query Search</h3>
+                            <button class="modal-close" data-modal="textModal">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <form id="textSearchForm">
+                            <div class="form-group">
+                                <label>Search Query</label>
+                                <input type="text" id="textQuery" placeholder="e.g., Italian restaurants in New York" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Max Results</label>
+                                <input type="number" id="textMaxResults" min="5" max="20" value="10">
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-block">
+                                <span>Search</span>
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Search Results -->
+                <div class="results-container" id="searchResults" style="display: none;">
+                    <div class="results-header">
+                        <h3>Search Results</h3>
+                        <button class="btn btn-secondary btn-sm" id="clearResults">
+                            <i class="fas fa-times"></i> Clear
+                        </button>
+                    </div>
+                    <div class="results-grid" id="resultsGrid"></div>
+                </div>
+            </section>
+
+            <!-- Discover Section -->
+            <section class="app-section" id="discoverSection">
+                <div class="section-header">
+                    <h2>Discover Places</h2>
+                    <p>Explore recommended places near you</p>
+                </div>
+
+                <button class="btn btn-primary" id="discoverPlacesBtn">
+                    <span>Discover Now</span>
+                    <i class="fas fa-compass"></i>
+                </button>
+
+                <div class="discover-results" id="discoverResults"></div>
+            </section>
+
+            <!-- Location Section -->
+            <section class="app-section" id="locationSection">
+                <div class="section-header">
+                    <h2>Your Location</h2>
+                    <p>Manage your current location</p>
+                </div>
+
+                <div class="location-info-card">
+                    <div class="info-icon">
+                        <i class="fas fa-map-marker-alt"></i>
+                    </div>
+                    <div class="info-content">
+                        <h3>Current Location</h3>
+                        <p id="currentLocationDisplay">Loading...</p>
+                    </div>
+                    <button class="btn btn-secondary" id="updateLocationBtn">
+                        <i class="fas fa-sync-alt"></i> Update
+                    </button>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Place Details Modal -->
+    <div class="modal modal-large" id="placeDetailsModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="placeDetailTitle">Place Details</h3>
+                <button class="modal-close" data-modal="placeDetailsModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Place Photos -->
+                <div class="place-photos" id="placePhotos"></div>
+
+                <!-- Place Info -->
+                <div class="place-info" id="placeInfo"></div>
+
+                <!-- Chat/Q&A Section -->
+                <div class="place-chat">
+                    <h4>
+                        <i class="fas fa-comments"></i> Ask Questions About This Place
+                    </h4>
+                    <div class="chat-messages" id="chatMessages"></div>
+                    <form class="chat-form" id="chatForm">
+                        <input type="text" id="chatInput" placeholder="Ask a question..." required>
+                        <button type="submit" class="btn btn-primary btn-icon">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Scripts -->
+    <script src="js/modern-config.js"></script>
+    <script src="js/modern-api.js"></script>
+    <script src="js/modern-app.js"></script>
+</body>
+</html>

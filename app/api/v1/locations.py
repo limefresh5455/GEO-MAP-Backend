@@ -26,7 +26,7 @@ def get_my_location(
     current_user: User = Depends(get_current_user),
     service: LocationService = Depends(_service),
 ):
-    """Return the authenticated user's active current location."""
+    """Get user's current active location."""
     location = service.get_current_location(current_user.id)
     return APIResponse(
         success=True,
@@ -42,8 +42,18 @@ def gps_update(
     service: LocationService = Depends(_service),
 ):
     """
-    Receive a GPS coordinate ping from the client app.
-    Duplicate pings within 10m are acknowledged but not persisted.
+    Update location from GPS coordinates.
+    
+    **Request body:**
+    ```json
+    {
+      "latitude": 28.6304,
+      "longitude": 77.2177,
+      "accuracy": 10.0
+    }
+    ```
+    
+    Duplicates within 10m are ignored.
     """
     location, is_duplicate = service.process_gps_update(current_user.id, payload)
 
@@ -67,7 +77,18 @@ def manual_update(
     current_user: User = Depends(get_current_user),
     service: LocationService = Depends(_service),
 ):
-    """Manually update the authenticated user's location."""
+    """
+    Manually set location.
+    
+    **Request body:**
+    ```json
+    {
+      "latitude": 28.6304,
+      "longitude": 77.2177,
+      "label": "Home"
+    }
+    ```
+    """
     location = service.process_manual_update(current_user.id, payload)
     return APIResponse(
         success=True,
@@ -83,7 +104,7 @@ def get_history(
     current_user: User = Depends(get_current_user),
     service: LocationService = Depends(_service),
 ):
-    """Return the authenticated user's location history with pagination."""
+    """Get location history with pagination."""
     items, total = service.get_location_history(current_user.id, page, page_size)
     return APIResponse(
         success=True,
@@ -103,7 +124,7 @@ def get_latest(
     current_user: User = Depends(get_current_user),
     service: LocationService = Depends(_service),
 ):
-    """Return the most recently created location record."""
+    """Get most recent location record."""
     location = service.get_latest_location(current_user.id)
     return APIResponse(
         success=True,
@@ -117,7 +138,7 @@ def delete_current_location(
     current_user: User = Depends(get_current_user),
     service: LocationService = Depends(_service),
 ):
-    """Soft-delete the authenticated user's current active location."""
+    """Deactivate current location (soft delete)."""
     found = service.deactivate_current_location(current_user.id)
     if not found:
         raise LocationNotFoundError()

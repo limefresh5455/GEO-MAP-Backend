@@ -23,9 +23,8 @@ services:
     container_name: geo_redis
     restart: unless-stopped
     ports:
-      - "6379:6379"            # Standard Redis port (no conflict)
-    # B-068 FIX: Increased maxmemory from 256mb to 512mb and changed eviction policy
-    # to volatile-lru (only evict keys with TTL) to protect long-lived place details cache
+      - "6379:6379"            
+
     command: redis-server --maxmemory 512mb --maxmemory-policy volatile-lru
     volumes:
       - redis_data:/data
@@ -51,8 +50,6 @@ services:
       redis:
         condition: service_healthy
 
-  # One-shot container: waits for RedisInsight to be ready, then
-  # registers the Redis connection via its REST API and exits.
   redis-insight-init:
     image: curlimages/curl:latest
     container_name: geo_redis_insight_init
@@ -87,7 +84,6 @@ services:
       - .env.docker
     networks:
       - geo_network
-    # B-067 FIX: API must wait for both DB and Redis to be healthy
     depends_on:
       db:
         condition: service_healthy

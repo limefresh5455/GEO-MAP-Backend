@@ -13,19 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 class PlacesService:
-    """
-    Orchestrates the nearby places search workflow.
-
-    Step 1: Resolve user location from PostgreSQL
-            → is_current=True AND is_active=True
-            → source is irrelevant (gps or manual both accepted)
-    Step 2: Generate user-scoped cache key
-    Step 3: Check Redis (cache-aside)
-    Step 4: On miss — call Google Places API
-    Step 5: Store result in Redis (TTL: 60 min)
-    Step 6: Return (places, from_cache, latitude, longitude)
-    """
-
     def __init__(
         self,
         db: Session,
@@ -41,14 +28,6 @@ class PlacesService:
     # ------------------------------------------------------------------
 
     def _get_user_current_location(self, user_id: int) -> Optional[UserLocation]:
-        """
-        Fetch the active current location for a user.
-
-        Query: user_locations WHERE user_id=X AND is_current=True AND is_active=True
-
-        The LocationService always deactivates the previous current record before
-        writing a new one, so this always returns the latest — regardless of source.
-        """
         return (
             self.db.query(UserLocation)
             .filter(
@@ -68,12 +47,6 @@ class PlacesService:
         request: NearbySearchRequest,
         user_id: int,
     ) -> Tuple[List[PlaceResult], bool, float, float]:
-        """
-        Returns: (places, from_cache, search_latitude, search_longitude)
-
-        Raises UserLocationNotFoundError if the user has no saved location.
-        """
-
         # Step 1 — Resolve location from database
         location = self._get_user_current_location(user_id)
         if location is None:

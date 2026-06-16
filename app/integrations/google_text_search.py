@@ -32,6 +32,8 @@ TEXT_SEARCH_FIELD_MASK = ",".join([
     "places.businessStatus",
     "places.googleMapsUri",
     "places.currentOpeningHours.openNow",
+    "places.priceLevel",                        # Phase 4: Price range
+    "places.photos",                            # Phase 4: Photo thumbnails
 ])
 
 TEXT_SEARCH_URL = f"{settings.GOOGLE_PLACES_BASE_URL}/places:searchText"
@@ -98,6 +100,15 @@ class GoogleTextSearchClient:
         location = raw.get("location", {})
         display_name_obj = raw.get("displayName", {})
         opening_hours = raw.get("currentOpeningHours", {})
+        
+        # Phase 4: Extract first photo for thumbnail preview
+        photos_raw = raw.get("photos", [])
+        first_photo_name = None
+        if photos_raw and isinstance(photos_raw, list) and len(photos_raw) > 0:
+            first_photo = photos_raw[0]
+            if isinstance(first_photo, dict):
+                first_photo_name = first_photo.get("name")
+        
         return DiscoveryPlaceResult(
             place_id=raw.get("id"),
             display_name=(
@@ -115,6 +126,8 @@ class GoogleTextSearchClient:
             business_status=raw.get("businessStatus"),
             google_maps_uri=raw.get("googleMapsUri"),
             open_now=opening_hours.get("openNow") if opening_hours else None,
+            price_level=raw.get("priceLevel"),              # Phase 4
+            first_photo_name=first_photo_name,              # Phase 4
         )
 
     async def _do_request(self, payload: Dict, headers: Dict) -> httpx.Response:

@@ -21,59 +21,23 @@ router = APIRouter(prefix="/places", tags=["Place Q&A"])
 @limiter.limit("20/minute")
 async def ask_place_question(
     request: Request,
-    place_id: str = Path(
-        ...,
-        min_length=1,
-        max_length=255,
-        description=(
-            "Google place ID of the place to ask about. "
-            "Must exist in the local database (call Details API first). "
-            "Should be knowledge-synced for best answers (call knowledge-sync first)."
-        ),
-    ),
+    place_id: str = Path(..., min_length=1, max_length=255),
     payload: PlaceQuestionRequest = ...,
     current_user: User = Depends(get_current_user),
     service: PlaceQAService = Depends(get_place_qa_service),
 ) -> PlaceQuestionResponse:
     """
-    Ask a natural-language question about a specific place.
-
-    **Examples of questions:**
-    - "Is this place open now?"
-    - "Does it have parking?"
-    - "Is it good for families?"
-    - "What are customers saying about the food?"
-    - "How much does it cost?"
-    - "Is it wheelchair accessible?"
-    - "What are the opening hours on weekends?"
-
-    **How it works (Geo Dynamic RAG pipeline):**
-    1. Load the place's structured profile from PostgreSQL.
-    2. Check whether the place has been knowledge-synced (Phase 3).
-    3. Embed the question via OpenAI `text-embedding-3-small`.
-    4. Query the place's Pinecone namespace for the most relevant knowledge chunks.
-    5. Filter chunks below the 0.30 cosine similarity threshold.
-    6. Build a context package: structured facts (always) + retrieved chunks.
-    7. Send context + question to OpenAI `gpt-4o-mini`.
-    8. Return the grounded answer with supporting evidence fragments.
-
-    **Answer sources:**
-    - `rag` — Pinecone retrieval succeeded; answer grounded on indexed knowledge.
-    - `structured_only` — No relevant Pinecone matches; answer from PostgreSQL data.
-    - `fallback` — Place not yet knowledge-synced; minimal answer from name/address.
-
-    **Grounding transparency:**
-    The response includes `grounding_fragments` — the exact knowledge chunks
-    used to construct the answer — so the frontend can show source attribution.
-
-    **Prerequisites:**
-    - `GET /api/v1/places/{place_id}/details` must have been called first.
-    - `POST /api/v1/places/{place_id}/knowledge-sync` recommended for full RAG.
-
-    **Required:** `Authorization: Bearer <token>`
+    Ask natural-language questions about a place using AI.
     
-    **B-028 FIX: Rate limited to 20 requests per minute per user to prevent
-    OpenAI API budget drain (each call costs ~$0.01-0.03).**
+    **Request body:**
+    ```json
+    {
+      "question": "Is this place wheelchair accessible?"
+    }
+    ```
+    
+    Uses RAG pipeline with Pinecone and OpenAI. Rate limited to 20/min.
+    Place must exist in DB (call Details API first).
     """
     logger.info(
         "Place Q&A — user_id: %s, place_id: %s, question: %r",

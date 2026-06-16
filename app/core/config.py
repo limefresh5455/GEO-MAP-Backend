@@ -16,6 +16,24 @@ class Settings(BaseSettings):
     GOOGLE_PLACES_API_KEY: str
     GOOGLE_PLACES_BASE_URL: str = "https://places.googleapis.com/v1"
 
+    # Google Routes API (shares the same API key as Places)
+    GOOGLE_ROUTES_BASE_URL: str = "https://routes.googleapis.com/directions/v2"
+    # Redis TTL for route cache (shorter than place details — traffic changes frequently)
+    REDIS_ROUTES_CACHE_TTL: int = 300          # 5 minutes
+    REDIS_ROUTE_MATRIX_CACHE_TTL: int = 120    # 2 minutes (matrix is used for live ETAs)
+
+    # Place Photos — Redis TTL for resolved CDN photo URLs
+    # Photo CDN URLs are stable for a few hours; 1 hour is safe.
+    REDIS_PHOTOS_CACHE_TTL: int = 3600         # 1 hour
+
+    # Autocomplete (Phase 2) — Redis TTL for autocomplete predictions
+    # Autocomplete results change frequently (businesses open/close), so shorter TTL.
+    REDIS_AUTOCOMPLETE_CACHE_TTL: int = 300    # 5 minutes
+
+    # Auto Knowledge Sync (Phase 3) — automatically sync place knowledge to Pinecone
+    # after fetching place details, eliminating the manual sync step.
+    AUTO_SYNC_KNOWLEDGE_ON_DETAILS_FETCH: bool = True  # set to False to disable
+
     # Redis (B-007 fix: password should be Optional, not empty string)
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379

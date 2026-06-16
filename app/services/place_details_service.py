@@ -1,25 +1,3 @@
-"""
-PlaceDetailsService — orchestrates the Place Details fetch pipeline.
-
-Priority order (cache-aside + DB-fallback pattern):
-  1. Redis cache  (key: place_details:{place_id}, TTL: 24 hours)
-  2. PostgreSQL   (place_details table)
-  3. Google Place Details API
-
-B11 FIX: Cache stampede prevention for place details.
-  When multiple concurrent requests miss the cache for the same place_id,
-  only one should call Google. We use a Redis SET NX (set-if-not-exists)
-  lock key with a short TTL. The first request acquires the lock, calls
-  Google, writes to cache and DB, then releases the lock. Concurrent
-  requests that fail to acquire the lock wait briefly and re-check the
-  cache, finding the result the winner already wrote.
-
-B17 FIX: DB record staleness check.
-  A DB hit where last_fetched_at is older than DETAILS_STALE_AFTER_DAYS
-  is treated as a cold miss — Google is called to refresh the data.
-  This prevents indefinitely stale hours, closures, and ratings.
-"""
-
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
@@ -121,6 +99,9 @@ class PlaceDetailsService:
     Resolves a place_id to a full PlaceDetailResult through the
     Redis → PostgreSQL → Google priority chain.
 
+    Phase 3: Optionally accepts a KnowledgeService to enable automatic
+    background knowledge sync after fetching from Google.
+
     Returns (PlaceDetailResult, source_label).
     """
 
@@ -129,14 +110,20 @@ class PlaceDetailsService:
         db: Session,
         redis_repo: RedisRepository,
         google_client: GooglePlaceDetailsClient,
+        knowledge_service=None,  # Optional[KnowledgeService] — avoid circular import
     ) -> None:
         self.db = db
         self.redis_repo = redis_repo
         self.google_client = google_client
+        self.knowledge_service = knowledge_service
         self.repo = PlaceDetailsRepository(db)
         self._details_ttl = settings.REDIS_DETAILS_CACHE_TTL
         # B17: Re-fetch from Google if the DB record is older than this
         self._stale_after_days: int = getattr(settings, "DETAILS_STALE_AFTER_DAYS", 7)
+        # Phase 3: Auto-sync knowledge after fetching from Google
+        self._auto_sync_enabled: bool = getattr(
+            settings, "AUTO_SYNC_KNOWLEDGE_ON_DETAILS_FETCH", True
+        )
 
     # ------------------------------------------------------------------
     # Internal: Redis helpers
@@ -195,6 +182,71 @@ class PlaceDetailsService:
         except Exception as exc:
             logger.warning("Lock release failed for %s: %s", place_id, exc)
 
+    async def _trigger_background_knowledge_sync(self, place_id: str) -> None:
+        """
+        Phase 3: Fire-and-forget knowledge sync after fetching place details.
+
+        This method creates an asyncio background task that syncs knowledge
+        to Pinecone without blocking the place details response. Failures
+        are logged but do not affect the details fetch flow.
+
+        Why background sync?
+        --------------------
+        - Place details API remains fast (no waiting for embedding + Pinecone)
+        - Users can immediately ask questions without manual sync step
+        - Sync failures don't break the details fetch
+        - Idempotent — if data unchanged, sync skips automatically
+
+        The background task uses the same DB session pattern as the sync
+        endpoint, creating a fresh session to avoid threading issues.
+        """
+        if not self._auto_sync_enabled:
+            logger.debug(
+                "Auto knowledge sync disabled — place_id: %s", place_id
+            )
+            return
+
+        if self.knowledge_service is None:
+            logger.debug(
+                "Auto knowledge sync skipped (no KnowledgeService injected) — "
+                "place_id: %s", place_id
+            )
+            return
+
+        async def _sync_task():
+            try:
+                from app.schemas.knowledge import KnowledgeSyncRequest
+                
+                logger.info(
+                    "Background knowledge sync started — place_id: %s", place_id
+                )
+                result = await self.knowledge_service.sync_place_knowledge(
+                    place_id=place_id,
+                    request=KnowledgeSyncRequest(force_resync=False),
+                )
+                if result.skipped:
+                    logger.info(
+                        "Background knowledge sync skipped (already up-to-date) — "
+                        "place_id: %s", place_id
+                    )
+                else:
+                    logger.info(
+                        "Background knowledge sync completed — place_id: %s, "
+                        "vectors: %d", place_id, result.vector_count or 0
+                    )
+            except Exception as exc:
+                # Log but don't raise — this is fire-and-forget
+                logger.warning(
+                    "Background knowledge sync failed for place_id %s: %s",
+                    place_id, exc
+                )
+
+        # Create background task (runs independently of the main response)
+        asyncio.create_task(_sync_task())
+        logger.debug(
+            "Background knowledge sync task created — place_id: %s", place_id
+        )
+
     async def _fetch_from_google_with_lock(
         self, place_id: str
     ) -> Tuple[PlaceDetailResult, str]:
@@ -245,6 +297,10 @@ class PlaceDetailsService:
             self.db.commit()
             logger.info("Place Details saved to DB — place_id: %s", place_id)
             await self._write_to_cache(detail)
+            
+            # Phase 3: Trigger background knowledge sync after successful fetch
+            await self._trigger_background_knowledge_sync(place_id)
+            
             return detail, DetailSource.GOOGLE
         finally:
             if acquired:

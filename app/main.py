@@ -1,9 +1,15 @@
 import logging
+import sys
+import traceback
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -12,12 +18,27 @@ from slowapi.util import get_remote_address
 from app.api.v1 import api_router
 from app.core.redis import close_redis, initialise_redis
 
+# Enhanced logging configuration with file handler for crash logs
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    format="%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("logs/app.log", mode="a", encoding="utf-8"),
+    ]
 )
 
 logger = logging.getLogger(__name__)
+
+# Separate logger for crash detection
+crash_logger = logging.getLogger("crash_detector")
+crash_handler = logging.FileHandler("logs/crashes.log", mode="a", encoding="utf-8")
+crash_handler.setLevel(logging.ERROR)
+crash_handler.setFormatter(
+    logging.Formatter("%(asctime)s | CRASH | %(name)s | %(message)s\n%(exc_info)s\n")
+)
+crash_logger.addHandler(crash_handler)
+crash_logger.setLevel(logging.ERROR)
 
 
 @asynccontextmanager
@@ -93,6 +114,21 @@ async def lifespan(app: FastAPI):
     app.state.http_text_search = httpx.AsyncClient(timeout=google_timeout, limits=limits)
     app.state.http_place_details = httpx.AsyncClient(timeout=google_timeout, limits=limits)
 
+    # Autocomplete client (Phase 2) — fast response times expected
+    app.state.http_autocomplete = httpx.AsyncClient(timeout=google_timeout, limits=limits)
+    logger.info("Autocomplete httpx client initialised.")
+
+    # Place Photos client — follow_redirects is handled inside the client,
+    # but we still want a shared connection pool for the CDN hit after redirect.
+    app.state.http_photos = httpx.AsyncClient(timeout=google_timeout, limits=limits)
+    logger.info("Place Photos httpx client initialised.")
+
+    # Routes API client — uses a slightly longer read timeout because route
+    # computation (especially traffic-aware) can take longer than a Places lookup.
+    routes_timeout = httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0)
+    app.state.http_routes = httpx.AsyncClient(timeout=routes_timeout, limits=limits)
+    logger.info("Routes API httpx client initialised.")
+
     logger.info("geo-map-backend ready.")
     yield
 
@@ -105,6 +141,9 @@ async def lifespan(app: FastAPI):
     await app.state.http_nearby.aclose()
     await app.state.http_text_search.aclose()
     await app.state.http_place_details.aclose()
+    await app.state.http_autocomplete.aclose()
+    await app.state.http_photos.aclose()
+    await app.state.http_routes.aclose()
     logger.info("httpx clients closed.")
 
     # B14 FIX: Shut down Pinecone thread pool executor
@@ -130,10 +169,67 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ----------------------------------------------------------------
+# CORS Middleware — allows frontend to communicate with backend
+# ----------------------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],              # Allow all headers
+    expose_headers=["*"],             # Expose all response headers
+    max_age=3600,                     # Cache preflight requests for 1 hour
+)
+
 # B-020 FIX: Rate limiter is now initialized in lifespan and attached to app.state
 # The middleware will access it from app.state.limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+
+
+# ----------------------------------------------------------------
+# Global Exception Handlers for Crash Detection
+# ----------------------------------------------------------------
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch all unhandled exceptions and log them for crash detection."""
+    crash_logger.error(
+        f"UNHANDLED EXCEPTION: {type(exc).__name__}\n"
+        f"Path: {request.method} {request.url.path}\n"
+        f"User-Agent: {request.headers.get('user-agent', 'unknown')}\n"
+        f"Error: {str(exc)}\n"
+        f"Traceback: {''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}",
+        exc_info=True
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "success": False,
+            "message": "Internal server error occurred. The issue has been logged.",
+            "error_type": type(exc).__name__,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Log validation errors for debugging."""
+    logger.warning(
+        f"Validation error on {request.method} {request.url.path}: {exc.errors()}"
+    )
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "success": False,
+            "message": "Validation error",
+            "errors": exc.errors(),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    )
+
 
 app.include_router(api_router)
 
