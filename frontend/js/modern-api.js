@@ -164,10 +164,39 @@ const API = {
     
     // === Place Q&A APIs ===
     qa: {
-        async askQuestion(placeId, question) {
-            return API.post('/place-qa/ask', {
-                place_id: placeId,
-                question
+        async askQuestion(placeId, question, sessionId = null) {
+            const payload = { question };
+            if (typeof sessionId === 'string' && sessionId.length === 24) {
+                payload.session_id = sessionId;
+            }
+            return API.post(`/places/${placeId}/question`, payload);
+        },
+        
+        async listSessions(page = 1, pageSize = 10, filters = {}) {
+            const params = new URLSearchParams({
+                page: page,
+                page_size: pageSize
+            });
+            if (filters.placeId) params.append('place_id', filters.placeId);
+            if (filters.search) params.append('search', filters.search);
+            if (filters.sort) params.append('sort', filters.sort);
+            
+            return API.get(`/places/qa/sessions?${params.toString()}`);
+        },
+        
+        async getSession(sessionId, page = 1, pageSize = 10) {
+            return API.get(`/places/qa/sessions/${sessionId}?page=${page}&page_size=${pageSize}`);
+        },
+        
+        async deleteSessions(sessionIds) {
+            const params = sessionIds.map(id => `session_ids=${id}`).join('&');
+            return API.delete(`/places/qa/sessions?${params}`);
+        },
+        
+        async updateSession(sessionId, data) {
+            return API.request(`/places/qa/sessions/${sessionId}`, {
+                method: 'PATCH',
+                body: JSON.stringify(data)
             });
         }
     },

@@ -2,9 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
-
 from sqlalchemy.orm import Session
-
 from app.integrations.google_place_details import GooglePlaceDetailsClient
 from app.repositories.place_details_repository import PlaceDetailsRepository
 from app.repositories.redis_repository import RedisRepository
@@ -16,7 +14,6 @@ from app.schemas.place_details import (
     PlaceReview,
 )
 from app.core.config import settings
-
 logger = logging.getLogger(__name__)
 
 _DETAILS_KEY_PREFIX = "place_details"
@@ -28,7 +25,6 @@ _LOCK_RETRY_INTERVAL = 0.3
 # B11: Max retries before giving up and calling Google directly
 _LOCK_MAX_RETRIES = 10
 
-
 def _details_cache_key(place_id: str) -> str:
     return f"{_DETAILS_KEY_PREFIX}:{place_id}"
 
@@ -38,11 +34,6 @@ def _lock_key(place_id: str) -> str:
 
 
 def _orm_to_result(record) -> PlaceDetailResult:
-    """
-    Convert a PlaceDetail ORM row back to a PlaceDetailResult schema object.
-    Handles JSONB → Pydantic re-hydration for nested fields.
-    """
-
     def _rehydrate_opening_hours(data: Optional[dict]) -> Optional[OpeningHours]:
         if not data:
             return None
@@ -95,16 +86,6 @@ def _orm_to_result(record) -> PlaceDetailResult:
 
 
 class PlaceDetailsService:
-    """
-    Resolves a place_id to a full PlaceDetailResult through the
-    Redis → PostgreSQL → Google priority chain.
-
-    Phase 3: Optionally accepts a KnowledgeService to enable automatic
-    background knowledge sync after fetching from Google.
-
-    Returns (PlaceDetailResult, source_label).
-    """
-
     def __init__(
         self,
         db: Session,
@@ -125,10 +106,7 @@ class PlaceDetailsService:
             settings, "AUTO_SYNC_KNOWLEDGE_ON_DETAILS_FETCH", True
         )
 
-    # ------------------------------------------------------------------
     # Internal: Redis helpers
-    # ------------------------------------------------------------------
-
     async def _try_get_from_cache(self, place_id: str) -> Optional[PlaceDetailResult]:
         key = _details_cache_key(place_id)
         raw = await self.redis_repo.get(key)
@@ -156,11 +134,6 @@ class PlaceDetailsService:
             )
 
     async def _acquire_lock(self, place_id: str) -> bool:
-        """
-        B11: Try to acquire a SET NX lock for this place_id.
-        Returns True if the lock was acquired (this request is the "winner").
-        Returns False if another request already holds the lock.
-        """
         if self.redis_repo.client is None:
             return True  # No Redis — skip locking, allow direct Google call
         try:
@@ -183,23 +156,6 @@ class PlaceDetailsService:
             logger.warning("Lock release failed for %s: %s", place_id, exc)
 
     async def _trigger_background_knowledge_sync(self, place_id: str) -> None:
-        """
-        Phase 3: Fire-and-forget knowledge sync after fetching place details.
-
-        This method creates an asyncio background task that syncs knowledge
-        to Pinecone without blocking the place details response. Failures
-        are logged but do not affect the details fetch flow.
-
-        Why background sync?
-        --------------------
-        - Place details API remains fast (no waiting for embedding + Pinecone)
-        - Users can immediately ask questions without manual sync step
-        - Sync failures don't break the details fetch
-        - Idempotent — if data unchanged, sync skips automatically
-
-        The background task uses the same DB session pattern as the sync
-        endpoint, creating a fresh session to avoid threading issues.
-        """
         if not self._auto_sync_enabled:
             logger.debug(
                 "Auto knowledge sync disabled — place_id: %s", place_id
@@ -250,10 +206,6 @@ class PlaceDetailsService:
     async def _fetch_from_google_with_lock(
         self, place_id: str
     ) -> Tuple[PlaceDetailResult, str]:
-        """
-        B11: Acquire a lock before calling Google. If another request
-        already holds the lock, wait and re-check the cache.
-        """
         acquired = await self._acquire_lock(place_id)
 
         if not acquired:
@@ -306,16 +258,9 @@ class PlaceDetailsService:
             if acquired:
                 await self._release_lock(place_id)
 
-    # ------------------------------------------------------------------
-    # Public: main entry point
-    # ------------------------------------------------------------------
-
     async def get_place_details(
         self, place_id: str
     ) -> Tuple[PlaceDetailResult, str]:
-        """
-        Fetch full place details via the three-tier priority chain.
-        """
         # Tier 1: Redis cache
         cached = await self._try_get_from_cache(place_id)
         if cached is not None:

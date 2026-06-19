@@ -31,9 +31,7 @@ async def compute_route(
     current_user: User = Depends(get_current_user),
     service: RoutesService = Depends(get_routes_service),
 ):
-    """
-    Get turn-by-turn directions from user's location to a destination.
-    
+    """    
     **Request body:**
     ```json
     {
@@ -41,8 +39,6 @@ async def compute_route(
       "travel_mode": "DRIVE"
     }
     ```
-    
-    Cached for 5 minutes. User must save location first.
     """
     logger.info(
         "compute_route — user_id: %s, destination: %s, mode: %s",

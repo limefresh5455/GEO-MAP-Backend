@@ -8,7 +8,6 @@ from app.integrations.google_text_search import GoogleTextSearchClient
 from app.repositories.redis_repository import RedisRepository
 from app.services.discovery_service import DiscoveryService
 
-
 def get_redis_repo() -> RedisRepository:
     return RedisRepository(get_redis_client())
 

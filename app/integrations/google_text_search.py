@@ -1,15 +1,6 @@
-"""
-Google Places Text Search (New) client.
-
-B10 FIX: Accepts a shared httpx.AsyncClient injected at construction time.
-See app/integrations/google_places.py for the full explanation.
-"""
-
 import logging
 from typing import Any, Dict, List, Optional
-
 import httpx
-
 from app.core.config import settings
 from app.exceptions.places import (
     GooglePlacesAPIError,
@@ -17,7 +8,6 @@ from app.exceptions.places import (
     GooglePlacesTimeoutError,
 )
 from app.schemas.discovery import DiscoveryPlaceResult
-
 logger = logging.getLogger(__name__)
 
 TEXT_SEARCH_FIELD_MASK = ",".join([
@@ -40,16 +30,6 @@ TEXT_SEARCH_URL = f"{settings.GOOGLE_PLACES_BASE_URL}/places:searchText"
 
 
 class GoogleTextSearchClient:
-    """
-    Async HTTP client for the Google Places Text Search (New) endpoint.
-
-    Parameters
-    ----------
-    http_client : httpx.AsyncClient, optional
-        Shared connection-pooled client injected from app.state (B10).
-        When None, a new client is created per call (test/fallback mode).
-    """
-
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None) -> None:
         self.api_key = settings.GOOGLE_PLACES_API_KEY
         self._http_client = http_client
@@ -131,10 +111,6 @@ class GoogleTextSearchClient:
         )
 
     async def _do_request(self, payload: Dict, headers: Dict) -> httpx.Response:
-        """
-        B10: Use shared client when available; per-call client as fallback.
-        B-030 FIX: Add warning when fallback is used.
-        """
         if self._http_client is not None:
             return await self._http_client.post(
                 TEXT_SEARCH_URL, json=payload, headers=headers
@@ -159,10 +135,6 @@ class GoogleTextSearchClient:
         location_bias_lon: Optional[float] = None,
         location_bias_radius: Optional[float] = None,
     ) -> List[DiscoveryPlaceResult]:
-        """
-        Call Google Text Search (New) and return normalised results.
-        Raises mapped HTTP exceptions on failure.
-        """
         payload = self._build_payload(
             text_query=text_query,
             max_result_count=max_result_count,

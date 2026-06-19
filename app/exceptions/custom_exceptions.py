@@ -1,13 +1,11 @@
 from fastapi import HTTPException, status
 
-
 class LocationNotFoundError(HTTPException):
     def __init__(self):
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No active location found for this user",
         )
-
 
 class InvalidCoordinatesError(HTTPException):
     def __init__(self, detail: str = "Invalid coordinate values"):
@@ -16,7 +14,6 @@ class InvalidCoordinatesError(HTTPException):
             detail=detail,
         )
 
-
 class DuplicateLocationError(HTTPException):
     def __init__(self):
         super().__init__(
@@ -24,10 +21,37 @@ class DuplicateLocationError(HTTPException):
             detail="Location unchanged duplicate update skipped",
         )
 
-
 class UnauthorizedAccessError(HTTPException):
     def __init__(self):
         super().__init__(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to access this resource",
+        )
+
+class NotFoundError(HTTPException):
+    """Generic not found error for any resource."""
+    def __init__(self, detail: str = "Resource not found"):
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=detail,
+        )
+
+class BadRequestError(HTTPException):
+    """Bad request error for validation failures."""
+    def __init__(self, detail: str = "Bad request"):
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        )
+
+class InsufficientCreditsError(HTTPException):
+    """User does not have enough credits for this operation."""
+    def __init__(self, required: int = 5, available: int = 0):
+        detail = (
+            f"Insufficient credits. Required: {required}, Available: {available}. "
+            f"Please purchase more credits."
+        )
+        super().__init__(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=detail,
         )

@@ -9,7 +9,6 @@ from app.schemas.place_details import PlaceDetailsResponse
 from app.services.place_details_service import PlaceDetailsService
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/places", tags=["Place Details"])
 
 
@@ -19,14 +18,6 @@ async def get_place_details(
     current_user: User = Depends(get_current_user),
     service: PlaceDetailsService = Depends(get_place_details_service),
 ) -> PlaceDetailsResponse:
-    """
-    Get full details for a place.
-    
-    Returns from: Redis cache (instant) → PostgreSQL → Google API
-    
-    Includes opening hours, reviews, photos, ratings, and contact info.
-    Auto-syncs knowledge for Q&A. Cached for 24 hours.
-    """
     logger.info(
         "Place Details request — user_id: %s, place_id: %s",
         current_user.id,

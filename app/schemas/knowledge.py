@@ -1,19 +1,6 @@
-"""
-Pydantic schemas for the Knowledge Sync layer.
-
-Covers:
-  POST /api/v1/places/{place_id}/knowledge-sync
-"""
-
 from datetime import datetime, timezone
 from typing import List, Optional
-
 from pydantic import BaseModel, Field
-
-
-# ---------------------------------------------------------------------------
-# Sync status constants — mirrors PlaceKnowledgeSync.sync_status column
-# ---------------------------------------------------------------------------
 
 class SyncStatus:
     PENDING = "pending"
@@ -21,15 +8,8 @@ class SyncStatus:
     FAILED  = "failed"
 
 
-# ---------------------------------------------------------------------------
-# Document chunk — internal use; exposed in response for transparency
-# ---------------------------------------------------------------------------
 
 class KnowledgeChunk(BaseModel):
-    """
-    A single semantic chunk of the place document that was embedded.
-    Returned in the sync response so callers can see what was indexed.
-    """
     chunk_id: str           # "{place_id}_chunk_{index}"
     section: str            # e.g. "summary", "hours", "reviews", "contact"
     text: str               # the plain-text content that was embedded
@@ -41,13 +21,6 @@ class KnowledgeChunk(BaseModel):
 # ---------------------------------------------------------------------------
 
 class KnowledgeSyncRequest(BaseModel):
-    """
-    Optional request body for POST /api/v1/places/{place_id}/knowledge-sync.
-
-    force_resync: When True, re-embeds and upserts even if the stored
-                  source_version hash matches the current place data.
-                  Defaults to False — idempotent by default.
-    """
     force_resync: bool = Field(
         default=False,
         description=(
@@ -62,8 +35,6 @@ class KnowledgeSyncRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class KnowledgeSyncResponse(BaseModel):
-    """Standard response envelope for POST /api/v1/places/{place_id}/knowledge-sync."""
-
     success: bool
     place_id: str
     sync_status: str                          # "synced" | "skipped" | "failed"

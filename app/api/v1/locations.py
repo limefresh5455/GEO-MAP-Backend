@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
-
 from app.database.connection import get_db
 from app.dependencies.auth import get_current_user
 from app.exceptions.custom_exceptions import LocationNotFoundError
@@ -13,9 +12,7 @@ from app.schemas.location import (
     PaginatedHistoryResponse,
 )
 from app.services.location_service import LocationService
-
 router = APIRouter(prefix="/locations", tags=["Locations"])
-
 
 def _service(db: Session = Depends(get_db)) -> LocationService:
     return LocationService(db)
@@ -41,9 +38,7 @@ def gps_update(
     current_user: User = Depends(get_current_user),
     service: LocationService = Depends(_service),
 ):
-    """
-    Update location from GPS coordinates.
-    
+    """    
     **Request body:**
     ```json
     {
@@ -52,8 +47,6 @@ def gps_update(
       "accuracy": 10.0
     }
     ```
-    
-    Duplicates within 10m are ignored.
     """
     location, is_duplicate = service.process_gps_update(current_user.id, payload)
 

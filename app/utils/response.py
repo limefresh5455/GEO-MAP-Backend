@@ -1,8 +1,6 @@
 from datetime import datetime, timezone
 from typing import List, Optional
-
 from app.schemas.places import NearbySearchResponse, PlaceResult
-
 
 def build_nearby_response(
     places: List[PlaceResult],

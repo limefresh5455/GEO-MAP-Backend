@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # JWT
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 4350  
 
     # Google Places
     GOOGLE_PLACES_API_KEY: str
@@ -18,35 +18,26 @@ class Settings(BaseSettings):
 
     # Google Routes API (shares the same API key as Places)
     GOOGLE_ROUTES_BASE_URL: str = "https://routes.googleapis.com/directions/v2"
-    # Redis TTL for route cache (shorter than place details — traffic changes frequently)
-    REDIS_ROUTES_CACHE_TTL: int = 300          # 5 minutes
-    REDIS_ROUTE_MATRIX_CACHE_TTL: int = 120    # 2 minutes (matrix is used for live ETAs)
-
-    # Place Photos — Redis TTL for resolved CDN photo URLs
-    # Photo CDN URLs are stable for a few hours; 1 hour is safe.
-    REDIS_PHOTOS_CACHE_TTL: int = 3600         # 1 hour
-
-    # Autocomplete (Phase 2) — Redis TTL for autocomplete predictions
-    # Autocomplete results change frequently (businesses open/close), so shorter TTL.
-    REDIS_AUTOCOMPLETE_CACHE_TTL: int = 300    # 5 minutes
-
-    # Auto Knowledge Sync (Phase 3) — automatically sync place knowledge to Pinecone
-    # after fetching place details, eliminating the manual sync step.
-    AUTO_SYNC_KNOWLEDGE_ON_DETAILS_FETCH: bool = True  # set to False to disable
-
-    # Redis (B-007 fix: password should be Optional, not empty string)
+    REDIS_ROUTES_CACHE_TTL: int = 300          
+    REDIS_ROUTE_MATRIX_CACHE_TTL: int = 120    
+    REDIS_PHOTOS_CACHE_TTL: int = 3600         
+    REDIS_AUTOCOMPLETE_CACHE_TTL: int = 300   
+    AUTO_SYNC_KNOWLEDGE_ON_DETAILS_FETCH: bool = True  
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: Optional[str] = None
-    REDIS_CACHE_TTL: int = 3600         # 60 minutes — search results
-    REDIS_DETAILS_CACHE_TTL: int = 86400  # 24 hours — place details (rarely change)
+    REDIS_CACHE_TTL: int = 3600         
+    REDIS_DETAILS_CACHE_TTL: int = 86400  
     DETAILS_STALE_AFTER_DAYS: int = 7
-
     # OpenAI
     OPENAI_API_KEY: str
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     OPENAI_CHAT_MODEL: str = "gpt-4o-mini"          # used by Place Q&A (Phase 4)
     OPENAI_MAX_CONTEXT_TOKENS: int = 3000            # token budget for RAG context
+    
+    # Place Q&A Session Limits
+    MAX_SESSIONS_PER_USER: int = 100                 # Maximum active sessions per user
+    MAX_SESSION_AGE_DAYS: int = 90                   # Auto-archive sessions older than this
 
     # Pinecone
     PINECONE_API_KEY: str

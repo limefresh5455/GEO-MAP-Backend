@@ -1,13 +1,5 @@
-"""
-Dependency providers for the Places (legacy nearby search) layer.
-
-B10 FIX: GooglePlacesClient now receives the shared httpx.AsyncClient
-from app.state, eliminating per-request TCP/TLS connection overhead.
-"""
-
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
-
 from app.core.redis import get_redis_client
 from app.database.connection import get_db
 from app.integrations.google_places import GooglePlacesClient

@@ -1,22 +1,4 @@
-"""phase5_route_logs
-
-Revision ID: e5f6a7b8c9d0
-Revises: a1b2c3d4e5f6
-Create Date: 2026-06-13
-
-Add route_logs table to persist an audit trail of route computations,
-consistent with the search_queries pattern used for discovery.
-
-This table is write-once (append-only). It records who requested a route,
-the travel mode, destination, and key metrics (distance, duration).
-It is used for:
-  - Analytics: most-navigated-to places
-  - Debugging: understanding what routes users are computing
-  - Future: route personalization (prefer routes users have taken before)
-"""
-
 from typing import Sequence, Union
-
 import sqlalchemy as sa
 from alembic import op
 

@@ -1,11 +1,3 @@
-"""
-Dependency providers for the Place Q&A layer.
-
-B04 FIX: PineconeClient singleton from app.state (no per-request list_indexes).
-B24 FIX: OpenAIEmbeddingClient singleton from app.state.
-B-018 FIX: Removed fallback instantiation that defeated singleton pattern.
-"""
-
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
@@ -19,10 +11,6 @@ def get_place_qa_service(
     request: Request,
     db: Session = Depends(get_db),
 ) -> PlaceQAService:
-    """
-    B-018 FIX: No fallback instantiation. If clients are not in app.state,
-    raise clear error instead of silently creating new instances per request.
-    """
     pinecone_client: PineconeClient = getattr(request.app.state, "pinecone_client", None)
     if pinecone_client is None:
         raise HTTPException(

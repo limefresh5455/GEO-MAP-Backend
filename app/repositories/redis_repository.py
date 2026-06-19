@@ -10,14 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 class RedisRepository:
-    """
-    Low-level Redis operations.
-    No business logic — only get, set, delete, exists, key generation.
-
-    B05 FIX: All methods silently return the "miss" sentinel (None / False / -2)
-    when self.client is None, so callers behave as if every key is a cache
-    miss when Redis is unavailable.
-    """
 
     def __init__(self, client: Optional[Redis]):
         self.client = client
@@ -31,19 +23,6 @@ class RedisRepository:
         radius: float,
         max_result_count: int,
     ) -> str:
-        """
-        Deterministic cache key scoped to a specific user + search parameters.
-
-        Format: nearby:{user_id}:{lat}:{lon}:{radius}:{count}
-
-        Coordinates rounded to 4 decimal places (~11m precision) to prevent
-        GPS noise from generating spurious cache misses.
-
-        Examples:
-          nearby:15:21.2514:81.6296:500:20   ← user 15, Raipur
-          nearby:15:19.076:72.8777:500:20    ← user 15, Mumbai (after location change)
-          nearby:42:19.076:72.8777:500:20    ← user 42, same coords but different user
-        """
         lat = round(latitude, 4)
         lon = round(longitude, 4)
         return f"nearby:{user_id}:{lat}:{lon}:{radius}:{max_result_count}"

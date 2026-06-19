@@ -1,9 +1,7 @@
 import logging
 from typing import Optional, Tuple
-
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-
 from app.exceptions.custom_exceptions import LocationNotFoundError
 from app.models.user_location import UserLocation
 from app.repositories.location_repository import LocationRepository
@@ -16,16 +14,12 @@ from app.validators.location_validator import (
 
 logger = logging.getLogger(__name__)
 
-
 class LocationService:
     def __init__(self, db: Session):
         self.db = db
         self.repo = LocationRepository(db)
 
-    # ------------------------------------------------------------------
     # GPS Update (auto from client)
-    # ------------------------------------------------------------------
-
     def _do_gps_write(
         self, user_id: int, payload: GPSUpdateRequest
     ) -> Tuple[UserLocation, bool]:
@@ -72,7 +66,6 @@ class LocationService:
     def process_gps_update(
         self, user_id: int, payload: GPSUpdateRequest
     ) -> Tuple[UserLocation, bool]:
-        
         validate_coordinates(payload.latitude, payload.longitude)
         validate_accuracy(payload.accuracy)
 
@@ -140,10 +133,7 @@ class LocationService:
         self.db.refresh(new_location)
         return new_location
 
-    # ------------------------------------------------------------------
     # Reads
-    # ------------------------------------------------------------------
-
     def get_current_location(self, user_id: int) -> UserLocation:
         location = self.repo.get_current_location(user_id)
         if not location:
@@ -159,10 +149,7 @@ class LocationService:
     def get_location_history(self, user_id: int, page: int, page_size: int):
         return self.repo.get_history(user_id, page, page_size)
 
-    # ------------------------------------------------------------------
     # Soft Delete
-    # ------------------------------------------------------------------
-
     def deactivate_current_location(self, user_id: int) -> bool:
         found = self.repo.soft_delete_current(user_id)
         if found:

@@ -4,16 +4,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-
 from app.database.base import Base
 
 
 class UserLocation(Base):
-    """
-    The user's current active location.
-    Only one record per user should have is_current=True at any time.
-    Previous records are marked is_current=False on every update.
-    """
 
     __tablename__ = "user_locations"
 

@@ -1,46 +1,6 @@
-"""
-Google Places Autocomplete (New) client — Phase 2 / Autocomplete Feature.
-
-Returns place predictions as the user types their search query.
-
-How the Google Places Autocomplete API works
----------------------------------------------
-The Autocomplete (New) API accepts an input string (e.g. "bur") and
-returns a list of place predictions with:
-  - place_id         : stable identifier for the place
-  - structured_format: main text + secondary text for two-line display
-  - types            : place type categories (e.g. ["restaurant", "food"])
-
-The API call format:
-    POST https://places.googleapis.com/v1/places:autocomplete
-    Headers: X-Goog-Api-Key, X-Goog-FieldMask
-    Body: { "input": "bur", "locationBias": {...}, ... }
-
-Strategy used here
-------------------
-- We use locationBias (circle) to prioritize suggestions near the user.
-- Results are cached in Redis for 5 minutes (autocomplete results change
-  frequently as businesses open/close, so shorter TTL than place details).
-- The frontend should debounce input and only call once the user has
-  typed at least 2 characters to reduce API calls.
-- Predictions are returned as-is; the frontend calls the Places Details
-  API when the user selects a suggestion to get full place data.
-
-Architecture notes
-------------------
-- Shares the same httpx.AsyncClient pattern as all other Google clients
-  (B10 pattern — connection pool injected from app.state).
-- Raises the same exception hierarchy (GooglePlacesAPIError etc.) so the
-  service layer has one consistent error surface.
-- input_offset is not implemented (it is used for highlighting matched
-  text in the UI, but the frontend can do this client-side).
-"""
-
 import logging
 from typing import Any, Dict, List, Optional
-
 import httpx
-
 from app.core.config import settings
 from app.exceptions.places import (
     GooglePlacesAPIError,
@@ -52,28 +12,11 @@ logger = logging.getLogger(__name__)
 
 
 class GoogleAutocompleteClient:
-    """
-    Async client for the Google Places Autocomplete (New) API.
-
-    Returns place predictions as the user types their search query.
-
-    Parameters
-    ----------
-    http_client : httpx.AsyncClient, optional
-        Shared connection-pooled client from app.state (B10 pattern).
-        When None, a per-call client is created (test/fallback mode).
-    """
-
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None) -> None:
         self.api_key = settings.GOOGLE_PLACES_API_KEY
         self.base_url = settings.GOOGLE_PLACES_BASE_URL
         self._http_client = http_client
-        # Autocomplete should be fast — slightly shorter timeout than other APIs
         self._timeout = httpx.Timeout(connect=5.0, read=8.0, write=5.0, pool=5.0)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _build_request_body(
         self,
@@ -84,15 +27,6 @@ class GoogleAutocompleteClient:
         included_primary_types: Optional[List[str]],
         language_code: Optional[str],
     ) -> Dict[str, Any]:
-        """
-        Build the JSON request body for the Autocomplete API.
-
-        Google requires:
-          - input: the text fragment (minimum 1 char, but we enforce 2+ at service layer)
-          - locationBias (optional): circle around user's location
-          - includedPrimaryTypes (optional): filter by place categories
-          - languageCode (optional): preferred language for results (default "en")
-        """
         body: Dict[str, Any] = {
             "input": input_text,
         }
@@ -123,18 +57,6 @@ class GoogleAutocompleteClient:
         return body
 
     def _parse_predictions(self, raw_response: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Parse the Google Autocomplete response into a clean list of predictions.
-
-        Each prediction contains:
-          - place_id           : stable identifier
-          - main_text          : primary display text (e.g. "Burj Khalifa")
-          - secondary_text     : secondary display text (e.g. "Dubai, UAE")
-          - types              : list of place type tags (e.g. ["tourist_attraction"])
-          - full_text          : complete description (main + secondary)
-
-        Returns an empty list if no predictions are found.
-        """
         suggestions = raw_response.get("suggestions", [])
         predictions = []
 
@@ -171,33 +93,6 @@ class GoogleAutocompleteClient:
         included_primary_types: Optional[List[str]] = None,
         language_code: str = "en",
     ) -> List[Dict[str, Any]]:
-        """
-        Get place autocomplete predictions for the given input text.
-
-        Parameters
-        ----------
-        input_text              : partial search query (e.g. "bur")
-        location_bias_lat       : latitude for location bias (optional)
-        location_bias_lon       : longitude for location bias (optional)
-        location_bias_radius    : bias radius in meters (default 5000 = 5km)
-        included_primary_types  : filter by place types (e.g. ["restaurant"])
-        language_code           : preferred language (default "en")
-
-        Returns
-        -------
-        List of prediction dicts, each containing:
-          - place_id: stable identifier for the place
-          - main_text: primary display text (e.g. "Burj Khalifa")
-          - secondary_text: secondary display text (e.g. "Dubai, UAE")
-          - full_text: complete description
-          - types: list of place type tags
-
-        Raises
-        ------
-        GooglePlacesRateLimitError : if Google returns 429
-        GooglePlacesAPIError       : on 400 (bad request) or 403 (auth failure)
-        GooglePlacesTimeoutError   : if request times out
-        """
         url = f"{self.base_url}/places:autocomplete"
         headers = {
             "X-Goog-Api-Key": self.api_key,

@@ -1,13 +1,3 @@
-"""
-Dependency providers for the Place Details layer.
-
-B10 FIX: GooglePlaceDetailsClient receives the shared httpx.AsyncClient
-from app.state for connection pooling.
-
-Phase 3: Injects KnowledgeService to enable automatic background knowledge
-sync after fetching place details from Google.
-"""
-
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 

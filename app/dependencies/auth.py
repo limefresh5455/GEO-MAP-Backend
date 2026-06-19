@@ -4,11 +4,10 @@ from sqlalchemy.orm import Session
 from app.core.security import decode_access_token
 from app.database.connection import get_db
 from app.models.user import User
-
+from app.services.token_blacklist_service import TokenBlacklistService
 bearer_scheme = HTTPBearer()
 
-
-def get_current_user(
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
@@ -20,6 +19,15 @@ def get_current_user(
     )
 
     token = credentials.credentials  # raw JWT string (without "Bearer " prefix)
+
+    # Check if token is blacklisted (logged out)
+    is_blacklisted = await TokenBlacklistService.is_token_blacklisted(token)
+    if is_blacklisted:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     payload = decode_access_token(token)
     if payload is None:
@@ -34,11 +42,9 @@ def get_current_user(
     except (ValueError, TypeError):
         raise credentials_exception
 
-    # B-016 FIX: Query with is_active check in same statement (atomic)
-    # This ensures we always get the current state from DB, not cached JWT data
     user = db.query(User).filter(
         User.id == user_id_int,
-        User.is_active == True  # noqa: E712 - SQLAlchemy requires == for bool
+        User.is_active == True  
     ).first()
     
     if user is None:

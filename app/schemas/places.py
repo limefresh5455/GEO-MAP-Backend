@@ -9,14 +9,6 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 class NearbySearchRequest(BaseModel):
-    """
-    Client payload for nearby places search.
-
-    latitude and longitude are intentionally excluded.
-    The backend resolves coordinates from the authenticated user's
-    saved location in the database.
-    """
-
     radius: float = Field(
         default=500.0,
         ge=1.0,

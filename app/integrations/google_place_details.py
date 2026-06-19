@@ -1,16 +1,3 @@
-"""
-Google Place Details (New) client.
-
-B10 FIX: Accepts a shared httpx.AsyncClient injected at construction time.
-See app/integrations/google_places.py for the full explanation.
-
-B15 FIX: place_id canonicalisation — if Google returns an id different from
-the requested one (canonical redirect), we store the REQUESTED id (not the
-Google-returned one) as the primary key. This ensures lookups by the
-originally-returned search place_id always hit the DB cache correctly.
-The google_canonical_id is logged for observability.
-"""
-
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -57,14 +44,6 @@ DETAILS_FIELD_MASK = ",".join([
 
 
 class GooglePlaceDetailsClient:
-    """
-    Parameters
-    ----------
-    http_client : httpx.AsyncClient, optional
-        Shared connection-pooled client from app.state (B10).
-        Falls back to a per-call client when None.
-    """
-
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None) -> None:
         self.api_key = settings.GOOGLE_PLACES_API_KEY
         self.base_url = settings.GOOGLE_PLACES_BASE_URL
@@ -146,17 +125,6 @@ class GooglePlaceDetailsClient:
     def _parse_response(
         self, data: Dict[str, Any], requested_place_id: str
     ) -> PlaceDetailResult:
-        """
-        Map the full Google Details response to our canonical schema.
-
-        B15 FIX: We always use requested_place_id as the stored place_id.
-        If Google returns a different canonical id, we log it but do NOT
-        overwrite the key — this ensures that a search result's place_id
-        always maps to the same DB row on subsequent lookups.
-        
-        B-033 FIX: Store both requested and canonical IDs in metadata for
-        future reconciliation. This allows lookups by either ID.
-        """
         google_returned_id = data.get("id")
         if google_returned_id and google_returned_id != requested_place_id:
             logger.info(
@@ -225,10 +193,7 @@ class GooglePlaceDetailsClient:
         )
 
     async def _do_request(self, url: str, headers: Dict) -> httpx.Response:
-        """
-        B10: Use shared client when available; per-call client as fallback.
-        B-030 FIX: Add warning when fallback is used.
-        """
+        
         if self._http_client is not None:
             return await self._http_client.get(url, headers=headers)
         

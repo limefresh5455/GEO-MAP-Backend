@@ -2,9 +2,7 @@ import hashlib
 import json
 import logging
 from typing import List, Optional, Tuple
-
 from sqlalchemy.orm import Session
-
 from app.core.config import settings
 from app.exceptions.places import (
     GooglePlacesAPIError,
@@ -28,15 +26,11 @@ from app.schemas.routes import (
 )
 
 logger = logging.getLogger(__name__)
-
 _ROUTE_KEY_PREFIX = "route"
 _MATRIX_KEY_PREFIX = "route_matrix"
 
 
-# ---------------------------------------------------------------------------
 # Cache key builders
-# ---------------------------------------------------------------------------
-
 def _route_cache_key(
     user_id: int,
     travel_mode: str,
@@ -44,13 +38,6 @@ def _route_cache_key(
     dest_lat: Optional[float],
     dest_lon: Optional[float],
 ) -> str:
-    """
-    Build a deterministic cache key for a single route request.
-
-    We use the place_id when available (stable, precise). When only coordinates
-    are given we round to 4 decimal places (~11m) before hashing to prevent
-    GPS noise from creating unnecessary cache misses.
-    """
     if place_id:
         dest_key = place_id
     else:
@@ -68,13 +55,6 @@ def _matrix_cache_key(
     travel_mode: str,
     destinations: list,
 ) -> str:
-    """
-    Build a deterministic cache key for a route matrix request.
-
-    We hash the sorted list of (lat, lon, place_id) tuples so that
-    different orderings of the same destination set produce the same key.
-    Coordinates are rounded to 4 decimal places before hashing.
-    """
     normalised = sorted([
         (
             round(d.get("lat", 0), 4),
@@ -89,10 +69,7 @@ def _matrix_cache_key(
     return f"{_MATRIX_KEY_PREFIX}:{user_id}:{travel_mode}:{payload_hash}"
 
 
-# ---------------------------------------------------------------------------
 # Human-readable formatting helpers
-# ---------------------------------------------------------------------------
-
 def _format_distance(meters: Optional[int]) -> Optional[str]:
     """Format distance in metres to a human-readable string."""
     if meters is None:
@@ -115,10 +92,7 @@ def _format_duration(seconds: Optional[int]) -> Optional[str]:
     return f"{hours} h {remaining_min} min"
 
 
-# ---------------------------------------------------------------------------
 # Service
-# ---------------------------------------------------------------------------
-
 class RoutesService:
     def __init__(
         self,
@@ -131,10 +105,7 @@ class RoutesService:
         self._client = routes_client
         self._location_repo = LocationRepository(db)
 
-    # ------------------------------------------------------------------
     # Single Route
-    # ------------------------------------------------------------------
-
     async def compute_route(
         self,
         request: ComputeRouteRequest,
@@ -230,10 +201,7 @@ class RoutesService:
             origin_lon,
         )
 
-    # ------------------------------------------------------------------
     # Route Matrix (batch ETAs)
-    # ------------------------------------------------------------------
-
     async def compute_route_matrix(
         self,
         request: ComputeRouteMatrixRequest,

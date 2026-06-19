@@ -40,6 +40,7 @@ class UserResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
+    credits: int
 
     model_config = {"from_attributes": True}
 

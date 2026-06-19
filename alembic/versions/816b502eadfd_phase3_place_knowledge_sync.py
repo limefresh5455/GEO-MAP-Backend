@@ -1,12 +1,4 @@
-"""phase3_place_knowledge_sync
-
-Revision ID: 816b502eadfd
-Revises: bb7a81bae21d
-Create Date: 2026-06-12 14:18:55.244770
-
-"""
 from typing import Sequence, Union
-
 from alembic import op
 import sqlalchemy as sa
 

@@ -1,14 +1,3 @@
-"""
-KnowledgeRepository — PostgreSQL operations for the place_knowledge_sync table.
-
-Rules
------
-- Upsert semantics: one row per place_id, updated in place.
-- Never commits — the service owns the transaction boundary.
-- Also provides read access to place_details so the knowledge service
-  does not need to import PlaceDetailsRepository directly.
-"""
-
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -22,17 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 class KnowledgeRepository:
-    """
-    Handles sync-state tracking in place_knowledge_sync
-    and read-only access to place_details.
-    """
-
     def __init__(self, db: Session) -> None:
         self.db = db
-
-    # ------------------------------------------------------------------
-    # place_details reads (read-only — writes owned by PlaceDetailsRepository)
-    # ------------------------------------------------------------------
 
     def get_place_detail(self, place_id: str) -> Optional[PlaceDetail]:
         """Return the canonical place record, or None if not yet fetched."""
@@ -42,10 +22,6 @@ class KnowledgeRepository:
             .first()
         )
 
-    # ------------------------------------------------------------------
-    # place_knowledge_sync reads
-    # ------------------------------------------------------------------
-
     def get_sync_record(self, place_id: str) -> Optional[PlaceKnowledgeSync]:
         """Return the sync state record for a place, or None if not yet synced."""
         return (
@@ -53,10 +29,6 @@ class KnowledgeRepository:
             .filter(PlaceKnowledgeSync.place_id == place_id)
             .first()
         )
-
-    # ------------------------------------------------------------------
-    # place_knowledge_sync writes
-    # ------------------------------------------------------------------
 
     def upsert_sync_record(
         self,
@@ -68,14 +40,6 @@ class KnowledgeRepository:
         source_version: str,
         error_message: Optional[str] = None,
     ) -> PlaceKnowledgeSync:
-        """
-        Insert or update the sync state for a place.
-
-        On success:  sync_status="synced",  synced_at=now,  error_message=None
-        On failure:  sync_status="failed",  error_message=<detail>,  synced_at unchanged
-
-        Flushed (not committed) — caller commits.
-        """
         existing = self.get_sync_record(place_id)
         now = datetime.now(timezone.utc)
 

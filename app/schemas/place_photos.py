@@ -1,10 +1,3 @@
-"""
-Pydantic schemas for the Place Photos layer.
-
-Covers:
-  GET /api/v1/places/{place_id}/photos
-"""
-
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -12,13 +5,6 @@ from pydantic import BaseModel, Field
 
 
 class PhotoItem(BaseModel):
-    """
-    A single resolved photo — resource name plus a ready-to-use CDN URL.
-
-    The frontend can use `url` directly in an <img src> tag.
-    `photo_name` is included so the frontend can request a different
-    size by calling the endpoint again with a different max_width_px.
-    """
 
     photo_name: str = Field(
         description=(

@@ -1,12 +1,4 @@
-"""phase2_place_details
-
-Revision ID: bb7a81bae21d
-Revises: 9b038a4ff5e5
-Create Date: 2026-06-12 14:08:30.453792
-
-"""
 from typing import Sequence, Union
-
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql

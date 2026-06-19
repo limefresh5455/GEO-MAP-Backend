@@ -15,6 +15,9 @@ from app.models import place_detail  # noqa: F401
 from app.models import place_knowledge_sync  # noqa: F401
 from app.models import place_question        # noqa: F401
 from app.models import place_answer_log      # noqa: F401
+from app.models import ai_chat_session # noqa: F401
+from app.models import ai_chat_message # noqa: F401
+
 
 config = context.config
 

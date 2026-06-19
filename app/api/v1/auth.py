@@ -1,5 +1,6 @@
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -20,6 +21,9 @@ from app.schemas.auth import (
     TokenResponse,
     UserResponse,
 )
+from app.services.token_blacklist_service import TokenBlacklistService
+
+bearer_scheme = HTTPBearer()
 
 # Initialize limiter for this router
 limiter = Limiter(key_func=get_remote_address)
@@ -35,6 +39,7 @@ def _user_to_response(user: User) -> UserResponse:
         is_active=user.is_active,
         created_at=user.created_at,
         updated_at=user.updated_at,
+        credits=user.credits,
     )
 
 
@@ -126,10 +131,28 @@ async def login(request: Request, payload: LoginRequest, db: Session = Depends(g
 
 
 @router.post("/logout", response_model=MessageResponse)
-def logout(current_user: User = Depends(get_current_user)):
-    """Logout (client-side token invalidation)."""
+async def logout(
+    current_user: User = Depends(get_current_user),
+    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
+):
+    token = credentials.credentials
+    
+    # Blacklist the token
+    success = await TokenBlacklistService.blacklist_token(token)
+    
+    if not success:
+        # Redis unavailable - FAIL the logout to prevent security issue
+        # User should not think they've logged out when token is still valid
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Logout service temporarily unavailable. "
+            "Token revocation system (Redis) is offline. "
+            "Please try again later or contact support if the issue persists."
+        )
+    
     return MessageResponse(
-        message=f"User '{current_user.email}' logged out successfully"
+        message=f"User '{current_user.email}' logged out successfully. "
+        "Token has been revoked and is no longer valid."
     )
 
 

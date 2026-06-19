@@ -2,9 +2,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
-
 from sqlalchemy.orm import Session
-
 from app.exceptions.places import PlaceDetailNotFoundError
 from app.integrations.openai_client import OpenAIEmbeddingClient
 from app.integrations.pinecone_client import PineconeClient
@@ -14,19 +12,8 @@ from app.repositories.place_details_repository import PlaceDetailsRepository
 from app.schemas.knowledge import KnowledgeChunk, KnowledgeSyncRequest, KnowledgeSyncResponse, SyncStatus
 
 logger = logging.getLogger(__name__)
-
-# Hard character limit per chunk before embedding.
-# text-embedding-3-small handles up to ~8191 tokens; 3000 chars ≈ 750 tokens,
-# well within budget and ensures dense, relevant chunks.
 _MAX_CHUNK_CHARS = 3000
-
-# Pinecone namespace prefix
 _NS_PREFIX = "place"
-
-
-# ---------------------------------------------------------------------------
-# Document builder
-# ---------------------------------------------------------------------------
 
 def _safe_str(value: Any, fallback: str = "") -> str:
     """Return str(value) or fallback if value is None/empty."""
@@ -39,9 +26,7 @@ def _safe_str(value: Any, fallback: str = "") -> str:
 def build_place_document(place: PlaceDetail) -> Dict[str, str]:
     sections: Dict[str, str] = {}
 
-    # ------------------------------------------------------------------
     # 1. Summary
-    # ------------------------------------------------------------------
     summary_parts = []
     if place.display_name:
         summary_parts.append(f"Place: {place.display_name}")
@@ -56,9 +41,7 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
     if summary_parts:
         sections["summary"] = "\n".join(summary_parts)
 
-    # ------------------------------------------------------------------
     # 2. Category
-    # ------------------------------------------------------------------
     cat_parts = []
     if place.primary_type:
         cat_parts.append(f"Primary category: {place.primary_type}")
@@ -67,10 +50,7 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
     if cat_parts:
         sections["category"] = "\n".join(cat_parts)
 
-    # ------------------------------------------------------------------
     # 3. Opening hours
-    # B-053 FIX: Safe dict access with proper None checks
-    # ------------------------------------------------------------------
     hours_parts = []
     if place.open_now is not None:
         hours_parts.append(
@@ -87,9 +67,7 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
     if hours_parts:
         sections["hours"] = "\n".join(hours_parts)
 
-    # ------------------------------------------------------------------
     # 4. Contact
-    # ------------------------------------------------------------------
     contact_parts = []
     if place.international_phone_number:
         contact_parts.append(
@@ -104,9 +82,7 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
     if contact_parts:
         sections["contact"] = "\n".join(contact_parts)
 
-    # ------------------------------------------------------------------
     # 5. Ratings & status
-    # ------------------------------------------------------------------
     rating_parts = []
     if place.rating is not None:
         rating_parts.append(f"Rating: {place.rating} / 5.0")
@@ -122,18 +98,14 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
     if rating_parts:
         sections["ratings"] = "\n".join(rating_parts)
 
-    # ------------------------------------------------------------------
     # 6. Accessibility
-    # ------------------------------------------------------------------
     if place.wheelchair_accessible_entrance is not None:
         accessible = place.wheelchair_accessible_entrance
         sections["accessibility"] = (
             f"Wheelchair accessible entrance: {'Yes' if accessible else 'No'}"
         )
 
-    # ------------------------------------------------------------------
     # 7. Reviews
-    # ------------------------------------------------------------------
     review_parts = []
     reviews = place.reviews or []
     if isinstance(reviews, list):
@@ -155,10 +127,7 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
     return sections
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
-
 def _compute_source_version(sections: Dict[str, str]) -> str:
     """SHA-256 of the full concatenated document — used for change detection."""
     full_text = "\n\n".join(
@@ -172,15 +141,8 @@ def _truncate(text: str, max_chars: int = _MAX_CHUNK_CHARS) -> str:
     return text[:max_chars]
 
 
-# ---------------------------------------------------------------------------
 # Service
-# ---------------------------------------------------------------------------
-
 class KnowledgeService:
-    """
-    Orchestrates the full knowledge sync pipeline for a single place.
-    """
-
     def __init__(
         self,
         db: Session,
@@ -193,31 +155,18 @@ class KnowledgeService:
         self.repo = KnowledgeRepository(db)
         self.details_repo = PlaceDetailsRepository(db)
 
-    # ------------------------------------------------------------------
     # Public: main entry point
-    # ------------------------------------------------------------------
-
     async def sync_place_knowledge(
         self,
         place_id: str,
         request: KnowledgeSyncRequest,
     ) -> KnowledgeSyncResponse:
-        """
-        Run the full knowledge sync pipeline for one place.
-
-        Returns KnowledgeSyncResponse with status "synced" or "skipped".
-        Raises PlaceDetailNotFoundError if the place has not been fetched yet.
-        Propagates EmbeddingError / PineconeError on downstream failures
-        after recording the failure in place_knowledge_sync.
-        """
         logger.info(
             "Knowledge sync start — place_id: %s, force: %s",
             place_id, request.force_resync,
         )
 
-        # ----------------------------------------------------------
         # Step 1 — Load place from DB
-        # ----------------------------------------------------------
         place = self.repo.get_place_detail(place_id)
         if place is None:
             logger.warning(
@@ -227,9 +176,7 @@ class KnowledgeService:
             )
             raise PlaceDetailNotFoundError(place_id)
 
-        # ----------------------------------------------------------
         # Step 2 — Build document sections
-        # ----------------------------------------------------------
         sections = build_place_document(place)
 
         # Filter empty sections
@@ -247,14 +194,10 @@ class KnowledgeService:
                 skipped=False,
             )
 
-        # ----------------------------------------------------------
         # Step 3 — Compute source version hash
-        # ----------------------------------------------------------
         source_version = _compute_source_version(sections)
 
-        # ----------------------------------------------------------
         # Step 4 — Skip check (idempotency)
-        # ----------------------------------------------------------
         if not request.force_resync:
             existing = self.repo.get_sync_record(place_id)
             if (
@@ -279,22 +222,16 @@ class KnowledgeService:
                     synced_at=existing.synced_at,
                 )
 
-        # ----------------------------------------------------------
         # Step 5 — Delete stale vectors from Pinecone
-        # ----------------------------------------------------------
         await self.pinecone_client.delete_place_namespace(place_id)
 
-        # ----------------------------------------------------------
         # Step 6 & 7 — Build and truncate chunk texts
-        # ----------------------------------------------------------
         section_names = list(sections.keys())
         chunk_texts = [
             _truncate(sections[name]) for name in section_names
         ]
 
-        # ----------------------------------------------------------
         # Step 8 — Embed all chunks in one batched call
-        # ----------------------------------------------------------
         logger.info(
             "Knowledge sync — embedding %d chunks for place_id: %s",
             len(chunk_texts), place_id,
@@ -310,9 +247,7 @@ class KnowledgeService:
             self.db.commit()
             raise
 
-        # ----------------------------------------------------------
         # Step 9 — Build Pinecone vector dicts
-        # ----------------------------------------------------------
         namespace = f"{_NS_PREFIX}_{place_id}"
         pinecone_vectors: List[Dict[str, Any]] = []
         knowledge_chunks: List[KnowledgeChunk] = []
@@ -342,9 +277,7 @@ class KnowledgeService:
                 )
             )
 
-        # ----------------------------------------------------------
         # Step 10 — Upsert to Pinecone
-        # ----------------------------------------------------------
         logger.info(
             "Knowledge sync — upserting %d vectors to Pinecone namespace: %s",
             len(pinecone_vectors), namespace,
@@ -363,9 +296,7 @@ class KnowledgeService:
             self.db.commit()
             raise
 
-        # ----------------------------------------------------------
         # Step 11 — Persist sync state
-        # ----------------------------------------------------------
         self.repo.upsert_sync_record(
             place_id=place_id,
             sync_status=SyncStatus.SYNCED,
@@ -375,14 +306,10 @@ class KnowledgeService:
             error_message=None,
         )
 
-        # ----------------------------------------------------------
         # Step 12 — Mark place_details.knowledge_synced = True
-        # ----------------------------------------------------------
         self.details_repo.mark_knowledge_synced(place_id)
 
-        # ----------------------------------------------------------
         # Step 13 — Commit
-        # ----------------------------------------------------------
         self.db.commit()
 
         now = datetime.now(timezone.utc)

@@ -1,13 +1,3 @@
-"""
-Dependency providers for the Knowledge Sync layer.
-
-B04 FIX: PineconeClient singleton is retrieved from app.state instead of
-         being re-instantiated per request (eliminates per-request list_indexes call).
-B24 FIX: OpenAIEmbeddingClient singleton retrieved from app.state.
-B-018 FIX: Removed fallback instantiation that defeated singleton pattern.
-           Now raises clear error if clients are not initialized.
-"""
-
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
@@ -21,10 +11,6 @@ def get_knowledge_service(
     request: Request,
     db: Session = Depends(get_db),
 ) -> KnowledgeService:
-    """
-    B-018 FIX: No fallback instantiation. If clients are not in app.state,
-    raise clear error instead of silently creating new instances per request.
-    """
     # B04/B24: Get singletons from app.state
     pinecone_client: PineconeClient = getattr(request.app.state, "pinecone_client", None)
     if pinecone_client is None:

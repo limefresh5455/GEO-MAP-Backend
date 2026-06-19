@@ -1,12 +1,7 @@
 from datetime import datetime
 from typing import Any, List, Optional
-
 from pydantic import BaseModel, Field
 
-
-# ---------------------------------------------------------------------------
-# Requests
-# ---------------------------------------------------------------------------
 
 class GPSUpdateRequest(BaseModel):
     """Payload sent by the mobile/web client for automatic GPS updates."""

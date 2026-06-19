@@ -1,19 +1,3 @@
-"""
-PlaceDetailsRepository — all PostgreSQL operations for the place_details table.
-
-Rules
------
-- Upsert pattern: if the place already exists, update it in place.
-  This keeps one canonical row per place_id — no duplicates.
-- The repository never commits — the service owns the transaction.
-- JSONB fields (types, opening_hours, photos, reviews) are serialised
-  to plain Python dicts/lists before storage so SQLAlchemy / psycopg2
-  can handle them without extra type adapters.
-
-B02 FIX: knowledge_synced is only reset to False when the content hash
-has actually changed, preserving the sync flag for unchanged data.
-"""
-
 import hashlib
 import logging
 from datetime import datetime, timezone
@@ -28,20 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 def _compute_content_hash(detail: PlaceDetailResult) -> str:
-    """
-    SHA-256 of the key content fields that matter for knowledge sync.
-    If this hash matches the existing record's content hash, the knowledge
-    vectors in Pinecone are still valid and knowledge_synced must NOT be reset.
-
-    Only fields that are embedded into the Pinecone knowledge document are
-    included — metadata-only fields like last_fetched_at are excluded.
-    """
-    # B058 FIX: Removed sorted() call on types list.
-    # The types list order doesn't matter for hash stability — we only care
-    # about whether the content has changed. Sorting on every hash computation
-    # is unnecessary overhead. If Google returns types in a different order
-    # but the same content, the hash will differ, but that's acceptable since
-    # the actual data structure changed (even if semantically equivalent).
     parts = [
         str(detail.display_name or ""),
         str(detail.formatted_address or ""),
@@ -67,10 +37,6 @@ def _compute_content_hash(detail: PlaceDetailResult) -> str:
 
 
 def _to_dict(obj: Any) -> Any:
-    """
-    Recursively convert Pydantic models inside lists/dicts to plain dicts
-    so they are safe to store in JSONB columns.
-    """
     if obj is None:
         return None
     if isinstance(obj, list):
@@ -80,13 +46,6 @@ def _to_dict(obj: Any) -> Any:
     if isinstance(obj, dict):
         return {k: _to_dict(v) for k, v in obj.items()}
     return obj
-
-
-# ---------------------------------------------------------------------------
-# Re-hydration helpers — used by the content-hash comparison in upsert()
-# Mirror the logic in PlaceDetailsService._orm_to_result but kept local
-# so the repository has no service dependency.
-# ---------------------------------------------------------------------------
 
 def _rehydrate_opening_hours(data: Optional[Dict]) -> Optional[Any]:
     """Silently returns None on any deserialisation error."""
@@ -111,11 +70,6 @@ def _rehydrate_reviews(data: Optional[list]) -> Optional[list]:
 
 
 class PlaceDetailsRepository:
-    """
-    Handles upserts and reads for the place_details table.
-    All writes are flushed (not committed) — the caller owns the transaction.
-    """
-
     def __init__(self, db: Session) -> None:
         self.db = db
 
@@ -132,11 +86,6 @@ class PlaceDetailsRepository:
         )
 
     def mark_knowledge_synced(self, place_id: str) -> bool:
-        """
-        Set knowledge_synced = True for a place.
-        Called by Phase 3 after a successful Pinecone upsert.
-        Returns True if the row existed and was updated.
-        """
         updated = (
             self.db.query(PlaceDetail)
             .filter(PlaceDetail.place_id == place_id)
@@ -144,26 +93,7 @@ class PlaceDetailsRepository:
         )
         return updated > 0
 
-    # ------------------------------------------------------------------
-    # Writes
-    # ------------------------------------------------------------------
-
     def upsert(self, detail: PlaceDetailResult) -> PlaceDetail:
-        """
-        Insert or update the canonical place record.
-
-        - If a row with this place_id exists: update all scalar and JSONB
-          fields, bump last_fetched_at, and reset knowledge_synced to False
-          (the new data may differ from what Pinecone has indexed).
-        - If no row exists: insert a fresh record.
-
-        Returns the ORM object (flushed, not committed).
-        
-        B059 FIX: Added try-except around insert to handle concurrent upsert races.
-        If two requests both check and find no existing row, both may try to insert.
-        The second insert will violate the unique constraint on place_id. We catch
-        this, rollback, and re-query to get the winner's row, then update it.
-        """
         existing = self.get_by_place_id(detail.place_id)
 
         opening_hours_dict = _to_dict(detail.opening_hours)
@@ -174,10 +104,6 @@ class PlaceDetailsRepository:
         now_utc = datetime.now(timezone.utc)
 
         if existing:
-            # B02 FIX: Compute content hash before updating fields.
-            # Only reset knowledge_synced=False when the embeddable content
-            # has actually changed — preserving the Pinecone sync state for
-            # identical re-fetches (e.g., cache TTL expiry with no data change).
             new_content_hash = _compute_content_hash(detail)
             existing_content_hash = _compute_content_hash(
                 PlaceDetailResult(

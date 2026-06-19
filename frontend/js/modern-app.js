@@ -5,6 +5,7 @@
 class GeoMapApp {
     constructor() {
         this.currentPlaceId = null;
+        this.currentSessionId = null;  // Track current Q&A session
         this.chatHistory = [];
         this.init();
     }
@@ -462,6 +463,7 @@ class GeoMapApp {
         }
         
         this.currentPlaceId = placeId;
+        this.currentSessionId = null;  // Reset session for new place
         this.chatHistory = [];
         
         try {
@@ -600,18 +602,32 @@ class GeoMapApp {
             // Show loading
             this.addChatMessage('Thinking...', 'assistant', true);
             
-            // Ask question
-            const response = await API.qa.askQuestion(this.currentPlaceId, question);
+            // Ask question (with session_id if available)
+            const response = await API.qa.askQuestion(
+                this.currentPlaceId, 
+                question, 
+                this.currentSessionId
+            );
             
             // Remove loading
             const messages = document.getElementById('chatMessages');
             messages.removeChild(messages.lastChild);
+            
+            // Store or update session ID
+            this.currentSessionId = response.session_id;
             
             // Add assistant message
             this.addChatMessage(response.answer, 'assistant');
             
             // Store in history
             this.chatHistory.push({ question, answer: response.answer });
+            
+            // Log session info
+            if (response.title) {
+                console.log('New session created:', response.session_id, '-', response.title);
+            } else {
+                console.log('Continued session:', response.session_id);
+            }
         } catch (error) {
             // Remove loading
             const messages = document.getElementById('chatMessages');

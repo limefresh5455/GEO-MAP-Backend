@@ -1,29 +1,3 @@
-"""
-PlacePhotosService — resolves photo URLs for a place.
-
-Pipeline
---------
-1. Look up the place in PostgreSQL (must exist — call Details API first).
-2. Extract the list of photo resource names from place_details.photos (JSONB).
-3. Check Redis cache — key: photo_urls:{place_id}:{max_width_px}
-   TTL: 1 hour (photo CDN URLs are stable for a few hours).
-4. On cache miss: call GooglePlacePhotosClient.resolve_photo_urls().
-5. Write resolved URLs to Redis.
-6. Return list of PhotoItem objects.
-
-Design rules
-------------
-- This service is read-only — it never writes to the place_details table.
-- It depends on place_details.photos already being populated, which
-  happens automatically when PlaceDetailsService fetches from Google.
-- Cache key includes max_width_px because the same photo resolved at
-  different sizes produces different CDN URLs.
-- Individual photo resolution failures are tolerated — the service returns
-  whatever successfully resolved. A place with 5 photos where 1 fails
-  returns 4 photos, not an error.
-- Redis failures are logged but never crash the request (cache is advisory).
-"""
-
 import json
 import logging
 from typing import List, Optional
@@ -41,14 +15,9 @@ logger = logging.getLogger(__name__)
 # Redis key prefix for resolved photo URLs
 _PHOTO_CACHE_PREFIX = "photo_urls"
 
-# TTL: 1 hour — Google CDN URLs are stable for a few hours.
-# Shorter than place_details TTL because photo URLs can expire.
+
 _PHOTO_CACHE_TTL = 3600
-
-# Hard cap — Google returns up to 10 photos in Place Details (New).
-# We cap the resolve call to avoid unnecessary API calls.
 _MAX_PHOTOS = 10
-
 
 def _photo_cache_key(place_id: str, max_width_px: int) -> str:
     """Cache key is scoped to place_id + requested width."""
@@ -56,16 +25,6 @@ def _photo_cache_key(place_id: str, max_width_px: int) -> str:
 
 
 class PlacePhotosService:
-    """
-    Resolves and caches photo URLs for a specific place.
-
-    Parameters
-    ----------
-    db            : SQLAlchemy session (read-only usage)
-    redis_repo    : RedisRepository for caching resolved URLs
-    photos_client : GooglePlacePhotosClient with shared httpx pool
-    """
-
     def __init__(
         self,
         db: Session,
@@ -82,13 +41,6 @@ class PlacePhotosService:
     # ------------------------------------------------------------------
 
     def _extract_photo_names(self, place_id: str) -> List[str]:
-        """
-        Load place from DB and extract photo resource names from the
-        JSONB photos column.
-
-        Returns an empty list (not raises) if the place has no photos.
-        Raises PlaceDetailNotFoundError if the place doesn't exist at all.
-        """
         record = self._repo.get_by_place_id(place_id)
         if record is None:
             raise PlaceDetailNotFoundError(place_id)
@@ -142,38 +94,13 @@ class PlacePhotosService:
                 "Photo URL cache write failed (%s): %s", cache_key, exc
             )
 
-    # ------------------------------------------------------------------
     # Public: main entry point
-    # ------------------------------------------------------------------
-
     async def get_place_photos(
         self,
         place_id: str,
         max_photos: int = 5,
         max_width_px: int = 800,
     ) -> PlacePhotosResponse:
-        """
-        Resolve and return photo URLs for a place.
-
-        Parameters
-        ----------
-        place_id     : Google place ID (must exist in place_details table)
-        max_photos   : maximum number of photos to return (1–10, default 5)
-        max_width_px : CDN image width in pixels (default 800)
-
-        Returns
-        -------
-        PlacePhotosResponse with a list of PhotoItem objects, each containing
-        a ready-to-use CDN URL.
-
-        Raises
-        ------
-        PlaceDetailNotFoundError   : if place is not in the local DB
-                                     (call GET /places/{id}/details first)
-        GooglePlacesRateLimitError : if Google returns 429
-        GooglePlacesAPIError       : on auth/billing failure
-        """
-        # Clamp max_photos to valid range
         max_photos = max(1, min(max_photos, _MAX_PHOTOS))
 
         # ---- Step 1: Check Redis cache ----
@@ -192,7 +119,6 @@ class PlacePhotosService:
             )
 
         # ---- Step 2: Extract photo names from DB ----
-        # This raises PlaceDetailNotFoundError if the place doesn't exist
         all_names = self._extract_photo_names(place_id)
 
         if not all_names:
@@ -206,9 +132,6 @@ class PlacePhotosService:
             )
 
         # ---- Step 3: Resolve URLs via Google Photos API ----
-        # Resolve all available names (up to _MAX_PHOTOS) and cache them all.
-        # We cache the full set, not just max_photos, so that a later request
-        # for a different count hits the cache instead of calling Google again.
         logger.info(
             "Photo URL cache MISS — resolving %d photos for place_id: %s",
             len(all_names), place_id,

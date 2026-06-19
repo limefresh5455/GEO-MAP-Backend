@@ -1,7 +1,5 @@
 import logging
-
 from fastapi import APIRouter, Depends
-
 from app.dependencies.auth import get_current_user
 from app.dependencies.places import get_places_service
 from app.models.user import User
@@ -21,8 +19,6 @@ async def nearby_search(
     service: PlacesService = Depends(get_places_service),
 ):
     """
-    Search all nearby places around user's saved location.
-    
     **Request body:**
     ```json
     {
@@ -30,8 +26,6 @@ async def nearby_search(
       "max_result_count": 20
     }
     ```
-    
-    Returns all place types. Cached for 60 minutes.
     """
     logger.info(
         "Nearby search request — user_id: %s, radius: %sm, max: %s",

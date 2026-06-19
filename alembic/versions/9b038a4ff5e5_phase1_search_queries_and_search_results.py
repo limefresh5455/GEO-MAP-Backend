@@ -1,12 +1,4 @@
-"""phase1_search_queries_and_search_results
-
-Revision ID: 9b038a4ff5e5
-Revises: 5c82d1dc0a22
-Create Date: 2026-06-12 14:00:51.683118
-
-"""
 from typing import Sequence, Union
-
 from alembic import op
 import sqlalchemy as sa
 

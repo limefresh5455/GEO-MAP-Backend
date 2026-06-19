@@ -1,18 +1,4 @@
-"""B09: partial unique index — one is_current=True per user
-
-Revision ID: f1a2b3c4d5e6
-Revises: cb3b8c851c9d
-Create Date: 2026-06-12 15:00:00.000000
-
-Adds a partial unique index on user_locations(user_id) WHERE is_current=True.
-This enforces the invariant that each user has at most one active current
-location at the database level, preventing the race condition where two
-concurrent GPS pings both insert is_current=True rows (B09).
-
-The service layer catches IntegrityError and retries once on violation.
-"""
 from typing import Sequence, Union
-
 from alembic import op
 import sqlalchemy as sa
 
@@ -38,9 +24,6 @@ def upgrade() -> None:
           )
     """)
 
-    # Partial unique index: only ONE is_current=TRUE row allowed per user.
-    # Rows where is_current=FALSE are excluded from the index entirely,
-    # so they are not affected and historical rows remain intact.
     op.create_index(
         index_name='uix_user_locations_single_current',
         table_name='user_locations',

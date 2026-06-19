@@ -1,16 +1,3 @@
-"""
-Google Places Nearby Search (New) client.
-
-B10 FIX: Accepts a shared httpx.AsyncClient injected at construction time.
-The application lifecycle (app/main.py) creates one persistent client with
-connection pooling (50 max connections, 20 keepalive). This client is reused
-across all requests, eliminating per-request TLS handshake overhead and
-preventing OS ephemeral port exhaustion under load.
-
-If no client is injected (e.g. in unit tests), a local per-call client is
-created as a fallback — same behaviour as before the fix.
-"""
-
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -48,16 +35,6 @@ NEARBY_SEARCH_URL = f"{settings.GOOGLE_PLACES_BASE_URL}/places:searchNearby"
 
 
 class GooglePlacesClient:
-    """
-    Async wrapper around the Google Places Nearby Search API (New).
-
-    Parameters
-    ----------
-    http_client : httpx.AsyncClient, optional
-        Shared connection-pooled client injected from app.state (B10).
-        When None, a new client is created per call (test/fallback mode).
-    """
-
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None) -> None:
         self.api_key = settings.GOOGLE_PLACES_API_KEY
         self._http_client = http_client
@@ -123,7 +100,6 @@ class GooglePlacesClient:
         return payload
 
     def _parse_place(self, raw: Dict[str, Any]) -> DiscoveryPlaceResult:
-        """Map a raw Google Places API place object to DiscoveryPlaceResult."""
         location = raw.get("location", {})
         display_name = raw.get("displayName", {})
         opening_hours = raw.get("currentOpeningHours", {})
@@ -157,12 +133,6 @@ class GooglePlacesClient:
         )
 
     async def _do_request(self, payload: Dict, headers: Dict) -> httpx.Response:
-        """
-        B10: Use the injected shared client when available; fall back to a
-        per-call client for tests or when called outside lifespan context.
-        
-        B-030 FIX: Fallback creates async client properly without blocking.
-        """
         if self._http_client is not None:
             return await self._http_client.post(
                 NEARBY_SEARCH_URL, json=payload, headers=headers
@@ -188,10 +158,6 @@ class GooglePlacesClient:
         included_types: Optional[List[str]] = None,
         excluded_types: Optional[List[str]] = None,
     ) -> List[DiscoveryPlaceResult]:
-        """
-        Call Google Places Nearby Search (New) and return normalised results.
-        Raises mapped HTTP exceptions on failure.
-        """
         payload = self._build_payload(
             latitude, longitude, radius, max_result_count, rank_preference,
             included_types, excluded_types

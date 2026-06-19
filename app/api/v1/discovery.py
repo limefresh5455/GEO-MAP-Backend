@@ -1,8 +1,6 @@
 import logging
 from typing import Optional
-
 from fastapi import APIRouter, Depends, Query
-
 from app.dependencies.auth import get_current_user
 from app.dependencies.discovery import get_discovery_service
 from app.models.user import User
@@ -11,8 +9,6 @@ from app.schemas.discovery import (
     AutocompleteResponse,
     AutocompletePrediction,
     DiscoveryPlaceResult,
-    DiscoverySearchRequest,
-    DiscoverySearchResponse,
     NearbyDiscoveryRequest,
     NearbyDiscoveryResponse,
     TextSearchRequest,
@@ -24,21 +20,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/discovery", tags=["Discovery"])
 
-@router.post("/text-search", response_model=TextSearchResponse)
+@router.post("/search", response_model=TextSearchResponse)
 async def text_search(
     payload: TextSearchRequest,
     current_user: User = Depends(get_current_user),
     service: DiscoveryService = Depends(get_discovery_service),
 ) -> TextSearchResponse:
     """
-    Search places using natural-language text query.
-    
     **Request body:**
     ```json
     {
       "text_query": "best coffee near me",
-      "max_result_count": 20,
-      "use_user_location_as_bias": true
+      "max_result_count": 20
     }
     ```
     
@@ -71,24 +64,21 @@ async def text_search(
 
 
 # ---------------------------------------------------------------------------
-# 2. Nearby Search (Discovery path — uses user's saved location)
+# 2. Nearby Search — Explore around user's saved location
 # ---------------------------------------------------------------------------
 
-@router.post("/nearby-search", response_model=NearbyDiscoveryResponse)
+@router.post("/nearby", response_model=NearbyDiscoveryResponse)
 async def nearby_search(
     payload: NearbyDiscoveryRequest,
     current_user: User = Depends(get_current_user),
     service: DiscoveryService = Depends(get_discovery_service),
 ) -> NearbyDiscoveryResponse:
     """
-    Search places within radius around user's saved location.
-    
-    **Request body - Predefined types:**
+    **Request body - Using preset:**
     ```json
     {
       "radius": 5000,
-      "max_result_count": 20,
-      "use_predefined_types": true
+      "preset": "preferred_types"
     }
     ```
     
@@ -96,20 +86,25 @@ async def nearby_search(
     ```json
     {
       "radius": 3000,
-      "max_result_count": 15,
       "included_types": ["restaurant", "cafe"]
     }
     ```
+    
+    **Available presets:**
+    - `preferred_types`: Everyday places (restaurants, cafes, hospitals, shopping, temples)
+    - `famous_places`: Tourist attractions, landmarks, museums, parks
+    
+    **Default:** If no preset or types specified, uses `preferred_types`
     
     User must save location first. Results cached for 60 minutes.
     """
     
     logger.info(
-        "Nearby Discovery — user_id: %s, radius: %sm, max: %s, predefined: %s",
+        "Nearby Discovery — user_id: %s, radius: %sm, max: %s, preset: %s",
         current_user.id,
         payload.radius,
         payload.max_result_count,
-        payload.use_predefined_types,
+        payload.preset,
     )
 
     places, from_cache, lat, lon = await service.nearby_search(
@@ -131,55 +126,7 @@ async def nearby_search(
 
 
 # ---------------------------------------------------------------------------
-# 3. Discovery Router — single entry point for the React frontend
-# ---------------------------------------------------------------------------
-
-@router.post("/search", response_model=DiscoverySearchResponse)
-async def discovery_search(
-    payload: DiscoverySearchRequest,
-    current_user: User = Depends(get_current_user),
-    service: DiscoveryService = Depends(get_discovery_service),
-) -> DiscoverySearchResponse:
-    """
-    Unified discovery - backend auto-selects text or nearby search based on query.
-    
-    **Request body:**
-    ```json
-    {
-      "query": "restaurants near me",
-      "radius": 5000,
-      "max_result_count": 20
-    }
-    ```
-    """
-    logger.info(
-        "Discovery Router — user_id: %s, query: %r",
-        current_user.id,
-        payload.query,
-    )
-
-    places, from_cache, resolved_mode, lat, lon = await service.discovery_search(
-        request=payload,
-        user_id=current_user.id,
-    )
-
-    source_msg = "from cache" if from_cache else "from Google"
-    mode_label = "Text Search" if resolved_mode == "text" else "Nearby Search"
-    return DiscoverySearchResponse(
-        success=True,
-        search_mode=resolved_mode,
-        message=f"{mode_label} completed ({source_msg})",
-        data=places,
-        total_results=len(places),
-        cached=from_cache,
-        query=payload.query,
-        search_latitude=lat,
-        search_longitude=lon,
-    )
-
-
-# ---------------------------------------------------------------------------
-# 4. Autocomplete (Phase 2 — Search UX)
+# 3. Autocomplete (Phase 2 — Search UX)
 # ---------------------------------------------------------------------------
 
 @router.get("/autocomplete", response_model=AutocompleteResponse)
@@ -191,13 +138,6 @@ async def autocomplete(
     current_user: User = Depends(get_current_user),
     service: DiscoveryService = Depends(get_discovery_service),
 ) -> AutocompleteResponse:
-    """
-    Get place autocomplete predictions as user types.
-    
-    **Example:** `?input=coffee&included_primary_types=restaurant,cafe`
-    
-    Results cached for 5 minutes.
-    """
     logger.info(
         "Autocomplete request — user_id: %s, input: %r",
         current_user.id,

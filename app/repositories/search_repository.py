@@ -1,14 +1,3 @@
-"""
-SearchRepository — all PostgreSQL operations for search_queries and search_results.
-
-Rules
------
-- No HTTP exceptions raised here; only DB-level work.
-- Both tables are append-only (immutable audit log).
-- All writes must be flushed (not committed) so the caller's service controls
-  the transaction boundary and can roll back on downstream failure.
-"""
-
 import logging
 from typing import List, Optional
 
@@ -22,10 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class SearchRepository:
-    """
-    Handles inserts and reads for search_queries and search_results.
-    Returned ORM objects are not committed — the caller owns the transaction.
-    """
 
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -47,10 +32,6 @@ class SearchRepository:
         result_count: int,
         from_cache: bool,
     ) -> SearchQuery:
-        """
-        Insert an audit row for the search that just ran.
-        Flushed (not committed) so the caller can batch with search_results.
-        """
         record = SearchQuery(
             user_id=user_id,
             search_mode=search_mode,
@@ -81,10 +62,6 @@ class SearchRepository:
         user_id: int,
         places: List[DiscoveryPlaceResult],
     ) -> List[SearchResult]:
-        """
-        Bulk-insert one SearchResult row per place in the result list.
-        Flushed together in one batch — caller commits when ready.
-        """
         rows: List[SearchResult] = []
         for position, place in enumerate(places):
             row = SearchResult(

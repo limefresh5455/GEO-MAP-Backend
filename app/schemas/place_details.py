@@ -1,10 +1,3 @@
-"""
-Pydantic schemas for the Place Details layer.
-
-Covers:
-  GET /api/v1/places/{place_id}/details
-"""
-
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -51,12 +44,6 @@ class PlaceReview(BaseModel):
 # ---------------------------------------------------------------------------
 
 class PlaceDetailResult(BaseModel):
-    """
-    Normalised full place profile.
-    Returned to the frontend on GET /api/v1/places/{place_id}/details.
-    Also used as the payload stored in PostgreSQL and cached in Redis.
-    """
-
     place_id: str
     display_name: Optional[str] = None
     formatted_address: Optional[str] = None

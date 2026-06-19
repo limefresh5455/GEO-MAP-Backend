@@ -1,12 +1,4 @@
-"""phase4_place_questions_and_answer_logs
-
-Revision ID: cb3b8c851c9d
-Revises: 5a15bef6f942
-Create Date: 2026-06-12 14:28:50.992840
-
-"""
 from typing import Sequence, Union
-
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql

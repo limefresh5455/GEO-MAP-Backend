@@ -1,12 +1,4 @@
-"""
-Pydantic schemas for the Discovery layer.
-
-Covers three endpoints:
-  POST /api/v1/discovery/text-search     — free-text search
-  POST /api/v1/discovery/nearby-search   — location-bounded search
-  POST /api/v1/discovery/search          — router (auto-picks mode)
-"""
-
+ 
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, List, Optional, Union
@@ -28,6 +20,17 @@ class NearbyRankPreference(str, Enum):
     """Google Nearby Search rankPreference values."""
     POPULARITY = "POPULARITY"
     DISTANCE = "DISTANCE"
+
+
+class DiscoveryPreset(str, Enum):
+    """
+    Predefined discovery presets for quick nearby search.
+    
+    - PREFERRED_TYPES: Everyday useful places (restaurants, cafes, hospitals, shopping)
+    - FAMOUS_PLACES: Tourist attractions, landmarks, cultural sites
+    """
+    PREFERRED_TYPES = "preferred_types"
+    FAMOUS_PLACES = "famous_places"
 
 
 class PredefinedPlaceType(str, Enum):
@@ -200,10 +203,10 @@ class TextSearchRequest(BaseModel):
 
 class NearbyDiscoveryRequest(BaseModel):
     radius: float = Field(
-        default=500.0,
-        ge=1.0,
+        default=5000.0,
+        ge=100.0,
         le=50000.0,
-        description="Search radius in metres (1–50 000)",
+        description="Search radius in metres (100–50,000). Default: 5km",
     )
     max_result_count: int = Field(
         default=20,
@@ -211,34 +214,31 @@ class NearbyDiscoveryRequest(BaseModel):
         le=20,
         description="Maximum places to return (1–20)",
     )
+    preset: Optional[DiscoveryPreset] = Field(
+        default=None,
+        description=(
+            "Quick discovery preset:\n"
+            "- 'preferred_types': Everyday places (restaurants, cafes, hospitals, shopping, temples)\n"
+            "- 'famous_places': Tourist attractions, landmarks, forts, museums, parks\n"
+            "If preset is provided, included_types is ignored. "
+            "If both preset and included_types are null, defaults to 'preferred_types'."
+        ),
+    )
     included_types: Optional[List[str]] = Field(
         default=None,
         description=(
-            "Google place type filters as an array, e.g. ['restaurant', 'cafe']. "
-            "MUST be an array, not a string. "
-            "You can use predefined types like 'temple', 'shopping_mall', "
-            "'tourist_attraction', 'restaurant', 'hospital', etc. "
-            "See PredefinedPlaceType enum for all available types. "
-            "Only used when use_predefined_types is false."
+            "Custom place type filters, e.g. ['restaurant', 'cafe']. "
+            "Ignored if preset is specified. "
+            "See Google Places API types or PredefinedPlaceType enum."
         ),
     )
     excluded_types: Optional[List[str]] = Field(
         default=None,
-        description="Place types to exclude from results (must be an array)",
+        description="Place types to exclude from results",
     )
     rank_preference: Optional[NearbyRankPreference] = Field(
         default=None,
         description="POPULARITY (default) or DISTANCE",
-    )
-    use_predefined_types: bool = Field(
-        default=False,
-        description=(
-            "When True, automatically searches for popular place categories: "
-            "temples, tourist attractions, shopping malls, restaurants, cafes, "
-            "parks, national parks, and hospitals. "
-            "This overrides included_types if both are provided. "
-            "Perfect for general discovery without specifying types manually."
-        ),
     )
     
     @field_validator("included_types", "excluded_types")

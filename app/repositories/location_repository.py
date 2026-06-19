@@ -1,24 +1,13 @@
 from typing import List, Optional, Tuple
-
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-
 from app.models.location_history import LocationHistory
 from app.models.user_location import UserLocation
 
 
 class LocationRepository:
-    """
-    All direct database interactions for location data.
-    Returns ORM objects or None. Never raises HTTP exceptions.
-    """
-
     def __init__(self, db: Session):
         self.db = db
-
-    # ------------------------------------------------------------------
-    # Reads
-    # ------------------------------------------------------------------
 
     def get_current_location(self, user_id: int) -> Optional[UserLocation]:
         """Return the single active current location for a user, or None."""
@@ -44,14 +33,6 @@ class LocationRepository:
     def get_history(
         self, user_id: int, page: int = 1, page_size: int = 20
     ) -> Tuple[List[LocationHistory], int]:
-        """
-        Return paginated location history and total record count.
-
-        B20 FIX: Uses a single SQL query with a window function (COUNT(*) OVER())
-        instead of two separate queries (count() + all()). This eliminates the
-        N+1 query pattern for pagination and is significantly faster for users
-        with large location histories.
-        """
         # Window function: COUNT(*) OVER() runs once per result set, not per page
         count_col = func.count(LocationHistory.id).over().label("total_count")
         rows = (

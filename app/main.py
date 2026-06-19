@@ -1,10 +1,9 @@
 import logging
 import sys
+import httpx
 import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
-
-import httpx
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,8 +14,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
-from app.api.v1 import api_router
-from app.core.redis import close_redis, initialise_redis
+from .api.v1 import api_router
+from .core.redis import close_redis, initialise_redis
 
 # Enhanced logging configuration with file handler for crash logs
 logging.basicConfig(
@@ -43,40 +42,17 @@ crash_logger.setLevel(logging.ERROR)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Application startup and shutdown lifecycle.
-
-    Startup order
-    -------------
-    1. Redis   — non-fatal; app degrades gracefully if unavailable (B05)
-    2. Pinecone — singleton client; index handle cached once (B04)
-    3. httpx clients — one shared connection pool per Google service (B10)
-    4. Pinecone executor — registered for clean shutdown (B14)
-    5. Rate limiter — B-020 FIX: initialized and attached to app.state
-
-    Shutdown order (reverse)
-    ------------------------
-    1. httpx clients closed
-    2. Pinecone executor shut down
-    3. Redis connection closed
-    """
     logger.info("Starting geo-map-backend...")
 
-    # ----------------------------------------------------------------
     # B-020 FIX: Initialize rate limiter and attach to app.state
-    # ----------------------------------------------------------------
     limiter = Limiter(key_func=get_remote_address)
     app.state.limiter = limiter
     logger.info("Rate limiter initialized")
-
-    # ----------------------------------------------------------------
+    
     # 1. Redis — B05 FIX: non-fatal startup; degrade gracefully
-    # ----------------------------------------------------------------
     await initialise_redis()
 
-    # ----------------------------------------------------------------
     # 2. Pinecone singleton — B04 FIX: index cached once at startup
-    # ----------------------------------------------------------------
     from app.core.config import settings  # noqa: PLC0415
     from app.integrations.pinecone_client import PineconeClient  # noqa: PLC0415
     from app.integrations.openai_client import OpenAIEmbeddingClient  # noqa: PLC0415
@@ -97,16 +73,12 @@ async def lifespan(app: FastAPI):
         )
     app.state.pinecone_client = pinecone_client
 
-    # ----------------------------------------------------------------
     # 3a. OpenAI singleton — B24 FIX: one AsyncOpenAI connection pool
-    # ----------------------------------------------------------------
     openai_client = OpenAIEmbeddingClient()
     app.state.openai_client = openai_client
     logger.info("OpenAI client initialised — model: %s", settings.OPENAI_EMBEDDING_MODEL)
 
-    # ----------------------------------------------------------------
     # 3b. Shared httpx clients — B10 FIX: one connection pool per service
-    # ----------------------------------------------------------------
     google_timeout = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
     limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
 
@@ -129,6 +101,9 @@ async def lifespan(app: FastAPI):
     app.state.http_routes = httpx.AsyncClient(timeout=routes_timeout, limits=limits)
     logger.info("Routes API httpx client initialised.")
 
+    app.state.http_open_meteo = httpx.AsyncClient(timeout=google_timeout, limits=limits)
+    logger.info("Open-Meteo httpx client initialised.")
+
     logger.info("geo-map-backend ready.")
     yield
 
@@ -144,6 +119,7 @@ async def lifespan(app: FastAPI):
     await app.state.http_autocomplete.aclose()
     await app.state.http_photos.aclose()
     await app.state.http_routes.aclose()
+    await app.state.http_open_meteo.aclose()
     logger.info("httpx clients closed.")
 
     # B14 FIX: Shut down Pinecone thread pool executor
@@ -157,14 +133,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Geo Map Backend",
-    description=(
-        "Location-aware backend with Bearer token authentication, "
-        "GPS location tracking, and Redis-cached nearby places search.\n\n"
-        "**How to authenticate:**\n"
-        "1. POST `/api/v1/auth/signup` to register.\n"
-        "2. POST `/api/v1/auth/login` with your email + password to get a token.\n"
-        "3. Click **Authorize**, paste the token, click Authorize."
-    ),
     version="3.0.0",
     lifespan=lifespan,
 )
@@ -177,21 +145,16 @@ app.add_middleware(
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],              # Allow all headers
-    expose_headers=["*"],             # Expose all response headers
-    max_age=3600,                     # Cache preflight requests for 1 hour
+    allow_headers=["*"],             
+    expose_headers=["*"],             
+    max_age=3600,                     
 )
 
-# B-020 FIX: Rate limiter is now initialized in lifespan and attached to app.state
-# The middleware will access it from app.state.limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 
-# ----------------------------------------------------------------
 # Global Exception Handlers for Crash Detection
-# ----------------------------------------------------------------
-
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Catch all unhandled exceptions and log them for crash detection."""
@@ -216,10 +179,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Log validation errors for debugging."""
-    logger.warning(
-        f"Validation error on {request.method} {request.url.path}: {exc.errors()}"
-    )
+    logger.warning(f"Validation error on {request.method} {request.url.path}: {exc.errors()}")
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
@@ -233,11 +193,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 app.include_router(api_router)
 
-
 @app.get("/", tags=["Health"])
 def health_check():
     return {"status": "ok", "service": "geo-map-backend", "version": "3.0.0"}
-
 
 def custom_openapi():
     if app.openapi_schema:
@@ -250,8 +208,6 @@ def custom_openapi():
         routes=app.routes,
     )
 
-    # Replace ALL auto-generated security schemes with a single plain Bearer scheme.
-    # This removes the OAuth2PasswordBearer form and shows only one token input field.
     schema.setdefault("components", {})
     schema["components"]["securitySchemes"] = {
         "BearerAuth": {
@@ -262,11 +218,7 @@ def custom_openapi():
         }
     }
 
-    # Apply globally so every endpoint uses this single scheme
     schema["security"] = [{"BearerAuth": []}]
-
-    # Also fix per-endpoint security references that FastAPI auto-generated
-    # from HTTPBearer — replace any "HTTPBearer" refs with "BearerAuth"
     for path_data in schema.get("paths", {}).values():
         for operation in path_data.values():
             if isinstance(operation, dict) and "security" in operation:
@@ -275,6 +227,4 @@ def custom_openapi():
     app.openapi_schema = schema
     return app.openapi_schema
 
-
-# Override FastAPI's default openapi() method
 app.openapi = custom_openapi

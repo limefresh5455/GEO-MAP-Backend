@@ -1,22 +1,5 @@
-"""B21 from_cache boolean + B29 is_active not null
-
-Revision ID: a1b2c3d4e5f6
-Revises: f1a2b3c4d5e6
-Create Date: 2026-06-12
-
-Fixes
------
-B21: search_queries.from_cache — migrate String(5) "true"/"false" to proper
-     Boolean column. Existing rows are converted: "true" → TRUE, else FALSE.
-
-B29: users.is_active — set NOT NULL constraint with a DEFAULT of TRUE.
-     A nullable is_active column allowed direct SQL inserts to create users
-     with NULL is_active, bypassing the is_active=True check in authentication.
-"""
-
 from alembic import op
 import sqlalchemy as sa
-
 
 # revision identifiers
 revision = 'a1b2c3d4e5f6'

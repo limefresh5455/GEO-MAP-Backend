@@ -22,10 +22,6 @@ from app.schemas.discovery import (
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Routing heuristics — keywords that signal "geo-first / nearby" intent.
-# If ANY token in the query matches, we route to Nearby Search.
-# ---------------------------------------------------------------------------
 _NEARBY_SIGNAL_PATTERN = re.compile(
     r"\b(near\s*me|around\s*me|nearby|close\s*by|closest|nearest|around\s*here"
     r"|within\s*\d+\s*(km|meters?|metres?|miles?)"
@@ -66,7 +62,6 @@ def _build_nearby_cache_key(
     lon = round(longitude, 4)
     return f"nearby:{user_id}:{lat}:{lon}:{radius}:{max_result_count}"
 
-
 def _build_autocomplete_cache_key(
     user_id: int,
     input_text: str,
@@ -82,7 +77,6 @@ def _build_autocomplete_cache_key(
     raw = f"{input_text.lower().strip()}|{lat_str}|{lon_str}|{types_str}|{language_code}"
     digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
     return f"autocomplete:{user_id}:{digest}"
-
 
 class DiscoveryService:
     def __init__(
@@ -103,10 +97,6 @@ class DiscoveryService:
         from app.core.config import settings
         self._search_cache_ttl = settings.REDIS_CACHE_TTL
         self._autocomplete_cache_ttl = settings.REDIS_AUTOCOMPLETE_CACHE_TTL
-
-    # ------------------------------------------------------------------
-    # Internal: resolve user's current location from DB
-    # ------------------------------------------------------------------
 
     def _get_user_location(self, user_id: int) -> Optional[UserLocation]:
         return (
@@ -147,10 +137,6 @@ class DiscoveryService:
         except Exception as exc:
             logger.warning("Cache write failed for key %s: %s", key, exc)
 
-    # ------------------------------------------------------------------
-    # Internal: audit persistence
-    # ------------------------------------------------------------------
-
     def _persist_audit(
         self,
         *,
@@ -188,10 +174,6 @@ class DiscoveryService:
                 user_id, search_mode, raw_query, exc, exc_info=True
             )
             self.db.rollback()
-
-    # ------------------------------------------------------------------
-    # 1. Text Search
-    # ------------------------------------------------------------------
 
     async def text_search(
         self,
@@ -296,10 +278,6 @@ class DiscoveryService:
 
         return places, False, bias_lat, bias_lon
 
-    # ------------------------------------------------------------------
-    # 2. Nearby Search
-    # ------------------------------------------------------------------
-
     async def nearby_search(
         self,
         request: NearbyDiscoveryRequest,
@@ -316,45 +294,35 @@ class DiscoveryService:
         latitude = loc.latitude
         longitude = loc.longitude
 
-        # Handle predefined types
+        # Handle preset and type logic
         included_types = request.included_types
-        if request.use_predefined_types:
-            # Use default popular categories including temples, restaurants, malls, 
-            # cafes, famous places, and nature areas (forests/parks)
-            from app.schemas.discovery import PredefinedPlaceType
-            included_types = [
-                # Religious places
-                PredefinedPlaceType.TEMPLE.value,
-                # Tourist attractions & famous places
-                PredefinedPlaceType.TOURIST_ATTRACTION.value,
-                # Nature & outdoors (forests, parks)
-                PredefinedPlaceType.PARK.value,
-                PredefinedPlaceType.NATIONAL_PARK.value,
-                # Shopping
-                PredefinedPlaceType.SHOPPING_MALL.value,
-                # Food & Dining
-                PredefinedPlaceType.RESTAURANT.value,
-                PredefinedPlaceType.CAFE.value,
-                # Healthcare
-                PredefinedPlaceType.HOSPITAL.value,
-            ]
+        
+        # Priority: preset > included_types > default to PREFERRED_TYPES
+        if request.preset:
+            included_types = self._get_preset_types(request.preset)
             logger.info(
-                "Using predefined place types for user_id %s: %s", user_id, included_types
+                "Using preset '%s' for user_id %s: %s", 
+                request.preset.value, user_id, included_types
+            )
+        elif not included_types:
+            # Default to preferred types when nothing specified
+            included_types = self._get_preset_types(DiscoveryPreset.PREFERRED_TYPES)
+            logger.info(
+                "No preset/types specified, defaulting to preferred_types for user_id %s", 
+                user_id
             )
         else:
-            # B-032 FIX: Ensure included_types is a list, not a string
-            if included_types is not None:
-                if isinstance(included_types, str):
-                    # If it's a string, split it by comma
-                    included_types = [t.strip() for t in included_types.split(",") if t.strip()]
-                    logger.warning(
-                        "included_types was a string, converted to list: %s", included_types
-                    )
-                elif not isinstance(included_types, list):
-                    logger.error(
-                        "included_types has invalid type %s, ignoring", type(included_types)
-                    )
-                    included_types = None
+            # Custom types provided - validate format
+            if isinstance(included_types, str):
+                included_types = [t.strip() for t in included_types.split(",") if t.strip()]
+                logger.warning(
+                    "included_types was a string, converted to list: %s", included_types
+                )
+            elif not isinstance(included_types, list):
+                logger.error(
+                    "included_types has invalid type %s, using default", type(included_types)
+                )
+                included_types = self._get_preset_types(DiscoveryPreset.PREFERRED_TYPES)
 
         cache_key = _build_nearby_cache_key(
             user_id=user_id,
@@ -389,7 +357,6 @@ class DiscoveryService:
             "Nearby Discovery cache MISS — user=%s → calling Google", user_id
         )
 
-        # GooglePlacesClient now returns List[DiscoveryPlaceResult] directly.
         places: List[DiscoveryPlaceResult] = await self.nearby_client.search_nearby(
             latitude=latitude,
             longitude=longitude,
@@ -417,6 +384,55 @@ class DiscoveryService:
         )
 
         return places, False, latitude, longitude
+
+    def _get_preset_types(self, preset: "DiscoveryPreset") -> List[str]:
+        """
+        Return place types based on discovery preset.
+        
+        - preferred_types: Everyday useful places
+        - famous_places: Tourist attractions and landmarks
+        """
+        from app.schemas.discovery import DiscoveryPreset
+        
+        if preset == DiscoveryPreset.PREFERRED_TYPES:
+            return [
+                # Religious places
+                "hindu_temple",
+                "mosque", 
+                "church",
+                # Food & Dining
+                "restaurant",
+                "cafe",
+                # Shopping
+                "shopping_mall",
+                # Healthcare
+                "hospital",
+                "pharmacy",
+                # Finance
+                "bank",
+                "atm",
+            ]
+        elif preset == DiscoveryPreset.FAMOUS_PLACES:
+            return [
+                # Tourist attractions
+                "tourist_attraction",
+                # Historical landmarks
+                "historical_landmark",
+                # Cultural sites
+                "museum",
+                "art_gallery",
+                # Nature & Parks
+                "park",
+                "national_park",
+                # Entertainment
+                "amusement_park",
+                "zoo",
+                "aquarium",
+            ]
+        else:
+            # Fallback to preferred types
+            logger.warning("Unknown preset %s, using preferred_types", preset)
+            return self._get_preset_types(DiscoveryPreset.PREFERRED_TYPES)
 
     # ------------------------------------------------------------------
     # 3. Discovery Router
@@ -494,7 +510,7 @@ class DiscoveryService:
             if loc:
                 bias_lat = loc.latitude
                 bias_lon = loc.longitude
-                bias_radius = 5000.0  # 5km bias radius for autocomplete
+                bias_radius = 500.0  # 5km bias radius for autocomplete
                 logger.debug(
                     "Autocomplete bias: user saved location (%s, %s)",
                     bias_lat, bias_lon,

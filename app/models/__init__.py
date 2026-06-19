@@ -7,6 +7,11 @@ from app.models.place_detail import PlaceDetail
 from app.models.place_knowledge_sync import PlaceKnowledgeSync
 from app.models.place_question import PlaceQuestion
 from app.models.place_answer_log import PlaceAnswerLog
+from app.models.place_qa_session import PlaceQASession
+from app.models.place_qa_message import PlaceQAMessage
+
+from app.models.ai_chat_session import AIChatSession
+from app.models.ai_chat_message import AIChatMessage
 
 __all__ = [
     "User",
@@ -18,4 +23,9 @@ __all__ = [
     "PlaceKnowledgeSync",
     "PlaceQuestion",
     "PlaceAnswerLog",
+    "PlaceQASession",
+    "PlaceQAMessage",
+    "AIChatSession",
+    "AIChatMessage",
 ]
+

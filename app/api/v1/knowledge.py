@@ -1,9 +1,7 @@
 import logging
-
 from fastapi import APIRouter, Depends, Path, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-
 from app.dependencies.auth import get_current_user
 from app.dependencies.knowledge import get_knowledge_service
 from app.models.user import User

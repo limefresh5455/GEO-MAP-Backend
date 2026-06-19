@@ -1,24 +1,7 @@
-"""
-Redis connection management.
-
-B05 FIX: initialise_redis() no longer raises on connection failure.
-The application starts and serves traffic even when Redis is unavailable.
-All cache operations already return None/False on error — the app degrades
-gracefully to direct Google API calls.
-
-get_redis_client() returns None when Redis is unavailable instead of
-raising RuntimeError. Every caller that uses RedisRepository is safe
-because RedisRepository.get() / set() wrap all operations in try/except.
-
-B-011 FIX: Use asyncio.Lock to prevent race condition on global client initialization.
-"""
-
 import asyncio
 import logging
 from typing import Optional
-
 import redis.asyncio as aioredis
-
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)

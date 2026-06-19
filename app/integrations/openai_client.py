@@ -1,30 +1,7 @@
-"""
-Async wrapper around the OpenAI Embeddings API and Chat Completions API.
-
-Models
-------
-  Embeddings : text-embedding-3-small  (1536 dimensions)
-  Chat       : gpt-4o-mini             (Phase 4 Q&A)
-
-SDK: openai==1.35.3 — uses AsyncOpenAI throughout.
-
-Design rules
-------------
-- One AsyncOpenAI instance per client object — SDK manages the connection pool.
-- Batch embeds up to 100 texts per API call.
-- Chat completions use a fixed system prompt that keeps answers
-  strictly grounded to the provided context.
-- Raises typed HTTPException subclasses so service layers stay clean.
-- Never logs embedding vector values — high-dimensional floats add nothing
-  to debug output and inflate log volume.
-"""
-
 import logging
 from typing import List, Optional
-
 from fastapi import HTTPException, status
 from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
-
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -80,29 +57,6 @@ class OpenAIEmbeddingClient:
     # ------------------------------------------------------------------
 
     async def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        """
-        Generate embeddings for a list of text strings.
-
-        Texts are processed in batches of up to _BATCH_LIMIT to stay within
-        the OpenAI API's per-request limit.
-
-        Parameters
-        ----------
-        texts : List[str]
-            Plain-text strings to embed. Empty strings are rejected by OpenAI;
-            the caller should filter them out before calling this method.
-
-        Returns
-        -------
-        List[List[float]]
-            One embedding vector per input text, in the same order.
-            Each vector has 1536 dimensions (text-embedding-3-small).
-
-        Raises
-        ------
-        EmbeddingRateLimitError   — OpenAI 429
-        EmbeddingError            — all other OpenAI errors
-        """
         if not texts:
             return []
 
@@ -171,30 +125,6 @@ class OpenAIEmbeddingClient:
         temperature: float = 0.2,
         max_tokens: int = 800,
     ) -> str:
-        """
-        Generate a grounded answer via OpenAI Chat Completions.
-
-        Parameters
-        ----------
-        system_prompt : str
-            Instructions that constrain the model to the provided context.
-            Built by PlaceQAService to include structured place facts.
-        user_message  : str
-            The user's natural-language question.
-        temperature   : float
-            0.0–1.0. Low value (0.2) keeps answers factual and deterministic.
-        max_tokens    : int
-            Hard cap on answer length.
-
-        Returns
-        -------
-        str — the model's answer text, stripped of leading/trailing whitespace.
-
-        Raises
-        ------
-        EmbeddingRateLimitError  — OpenAI 429
-        ChatCompletionError      — all other OpenAI errors
-        """
         model = settings.OPENAI_CHAT_MODEL
         logger.info(
             "OpenAI chat completion — model: %s, max_tokens: %d", model, max_tokens
@@ -229,4 +159,44 @@ class OpenAIEmbeddingClient:
 
         except Exception as exc:
             logger.error("Unexpected error during chat completion: %s", exc)
+            raise ChatCompletionError(str(exc))
+
+    async def get_chat_completion(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1000,
+    ) -> str:
+        model = settings.OPENAI_CHAT_MODEL
+        logger.info(
+            "OpenAI chat with history — model: %s, messages: %d, max_tokens: %d",
+            model, len(messages), max_tokens
+        )
+        try:
+            response = await self._client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            answer = response.choices[0].message.content or ""
+            logger.info(
+                "OpenAI chat with history — received %d chars", len(answer)
+            )
+            return answer.strip()
+
+        except RateLimitError:
+            logger.warning("OpenAI rate limit hit during chat with history")
+            raise EmbeddingRateLimitError()
+
+        except APITimeoutError:
+            logger.error("OpenAI chat with history request timed out")
+            raise ChatCompletionError("OpenAI chat completion request timed out")
+
+        except APIError as exc:
+            logger.error("OpenAI API error during chat with history: %s", exc)
+            raise ChatCompletionError(f"OpenAI API error: {exc.message}")
+
+        except Exception as exc:
+            logger.error("Unexpected error during chat with history: %s", exc)
             raise ChatCompletionError(str(exc))

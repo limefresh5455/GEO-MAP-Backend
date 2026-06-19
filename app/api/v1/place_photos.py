@@ -22,13 +22,6 @@ async def get_place_photos(
     current_user: User = Depends(get_current_user),
     service: PlacePhotosService = Depends(get_place_photos_service),
 ) -> PlacePhotosResponse:
-    """
-    Get photo URLs for a place.
-    
-    **Example:** `?max_photos=5&max_width_px=800`
-    
-    Place must exist in DB (call Details API first). Cached for 1 hour.
-    """
     logger.info(
         "Place Photos request — user_id: %s, place_id: %s, "
         "max_photos: %d, max_width_px: %d",

@@ -1,8 +1,6 @@
 import logging
 from typing import List, Optional, Tuple
-
 from sqlalchemy.orm import Session
-
 from app.exceptions.places import UserLocationNotFoundError
 from app.integrations.google_places import GooglePlacesClient
 from app.models.user_location import UserLocation
@@ -10,7 +8,6 @@ from app.repositories.redis_repository import RedisRepository
 from app.schemas.places import NearbySearchRequest, PlaceResult
 
 logger = logging.getLogger(__name__)
-
 
 class PlacesService:
     def __init__(
@@ -23,10 +20,7 @@ class PlacesService:
         self.redis_repo = redis_repo
         self.google_client = google_client
 
-    # ------------------------------------------------------------------
     # Internal: DB location lookup
-    # ------------------------------------------------------------------
-
     def _get_user_current_location(self, user_id: int) -> Optional[UserLocation]:
         return (
             self.db.query(UserLocation)
@@ -38,10 +32,7 @@ class PlacesService:
             .first()
         )
 
-    # ------------------------------------------------------------------
     # Public: main search entry point
-    # ------------------------------------------------------------------
-
     async def search_nearby(
         self,
         request: NearbySearchRequest,
