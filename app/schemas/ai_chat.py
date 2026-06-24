@@ -18,7 +18,7 @@ class AIChatMessageSchema(BaseModel):
 
 class AIChatResponse(BaseModel):
     success: bool = True
-    session_id: str          # UUID v4 string (was int)
+    session_id: str  # UUID v4 string (was int)
     answer: str
     is_new_session: bool = False
     title: Optional[str] = None
@@ -28,18 +28,19 @@ class AIChatResponse(BaseModel):
 class AIChatStartRequest(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
 
-    # Optional: when provided, continue that chat session (UUID string).
-    # When omitted, a new session will be created automatically.
+    # Optional session ID. Omit, null, or empty to start a new session.
+    # Provide a valid UUID v4 string to continue an existing session.
     session_id: Optional[str] = Field(
         default=None,
-        min_length=36,
-        max_length=36,
-        description="UUID v4 session ID to continue an existing chat",
+        description=(
+            "UUID v4 session ID to continue an existing chat. "
+            "Omit, set to null, or pass empty string to start a new session."
+        ),
     )
 
 
 class AIChatSessionDetail(BaseModel):
-    session_id: str          # UUID v4 string (was int)
+    session_id: str  # UUID v4 string (was int)
     title: str
     created_at: datetime
     last_message_at: Optional[datetime] = None

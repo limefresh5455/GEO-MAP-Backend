@@ -1,0 +1,704 @@
+<!--
+  GeoMap API Tester – Jinja2 Template
+  Renders interactive API endpoint test cards for all 17 API modules.
+-->
+{% macro endpoint(method, path, summary='', auth=false, limit='', params=[], body='') %}
+{% set method_lower = method.lower() %}
+<div class="endpoint-card" data-method="{{ method }}" data-path="{{ path }}">
+  <div class="endpoint-header">
+    <span class="method-badge {{ method_lower }}">{{ method }}</span>
+    <span class="endpoint-path">{{ path }}</span>
+    {% if summary %}
+    <span class="endpoint-summary">{{ summary }}</span>
+    {% endif %}
+  </div>
+  <div class="endpoint-body">
+    {% if params %}
+      {% for p in params %}
+      <div class="param-group">
+        <label class="param-label">
+          {{ p.name }}
+          {% if p.required %}<span class="required">*</span>{% endif %}
+        </label>
+        <div class="param-row">
+          {% if p.paramIn == 'path' %}
+            <span class="param-name">{{ p.name }}</span>
+          {% endif %}
+          {% if p.type == 'select' and p.options %}
+          <select data-param-in="{{ p.paramIn | default('query') }}">
+            {% for opt in p.options %}
+            <option value="{{ opt }}">{{ opt }}</option>
+            {% endfor %}
+          </select>
+          {% else %}
+          <input type="{{ p.type | default('text') }}"
+                 data-param-in="{{ p.paramIn | default('query') }}"
+                 placeholder="{{ p.desc | default('') }}"
+                 spellcheck="false">
+          {% endif %}
+        </div>
+        {% if p.desc %}
+        <div class="param-description">{{ p.desc }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% endif %}
+
+    {% if body %}
+    <div class="param-group">
+      <label class="param-label">Request Body <span class="text-secondary">(JSON)</span></label>
+      <textarea class="json-editor" spellcheck="false">{{ body }}</textarea>
+    </div>
+    {% endif %}
+
+    <div class="endpoint-actions">
+      <button class="btn btn-primary btn-sm" data-endpoint>
+        {% if method == 'GET' %}🔍{% elif method == 'DELETE' %}🗑️{% else %}🚀{% endif %}
+        Send {{ method }} Request
+      </button>
+      {% if auth %}
+      <span class="text-muted" style="font-size:11px;display:flex;align-items:center;gap:4px;">
+        🔒 Requires auth
+      </span>
+      {% endif %}
+      {% if limit %}
+      <span class="text-muted" style="font-size:11px;display:flex;align-items:center;gap:4px;margin-left:auto;">
+        ⏱️ {{ limit }}
+      </span>
+      {% endif %}
+    </div>
+
+    <div class="response-viewer">
+      <div class="response-header">
+        <span class="response-status">—</span>
+        <span class="response-time">—</span>
+        <div class="response-tabs" style="margin-left:auto;">
+          <span class="response-tab active">Response</span>
+        </div>
+      </div>
+      <div class="response-body">
+        <pre>{ }</pre>
+        <button class="copy-btn">📋 Copy</button>
+      </div>
+      <div class="response-error"></div>
+    </div>
+  </div>
+</div>
+{% endmacro %}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ page_title | default('GeoMap API Tester') }}</title>
+  <link rel="stylesheet" href="/ui/static/css/style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- ══════════════════════════════════════════════════════════════════
+         SIDEBAR
+         ══════════════════════════════════════════════════════════════════ -->
+    <nav class="sidebar" role="navigation" aria-label="API Section Navigation">
+      <div class="sidebar-logo">G</div>
+      <div class="sidebar-nav">
+        <a class="sidebar-link" data-scroll-to="auth-section" title="Authentication">🔐<span class="tooltip">Authentication</span></a>
+        <a class="sidebar-link" data-scroll-to="locations-section" title="Locations">📍<span class="tooltip">Locations</span></a>
+        <a class="sidebar-link" data-scroll-to="discovery-section" title="Discovery">🔍<span class="tooltip">Discovery</span></a>
+        <a class="sidebar-link" data-scroll-to="place-details-section" title="Place Details">🏪<span class="tooltip">Place Details</span></a>
+        <a class="sidebar-link" data-scroll-to="place-qa-section" title="Place Q&A">💬<span class="tooltip">Place Q&A</span></a>
+        <a class="sidebar-link" data-scroll-to="ai-chat-section" title="AI Chat">🤖<span class="tooltip">AI Chat</span></a>
+        <a class="sidebar-link" data-scroll-to="weather-section" title="Weather">🌤️<span class="tooltip">Weather</span></a>
+        <a class="sidebar-link" data-scroll-to="routes-section" title="Routes">🗺️<span class="tooltip">Routes</span></a>
+        <a class="sidebar-link" data-scroll-to="ai-personalization-section" title="AI Personalization">✨<span class="tooltip">AI Personalization</span></a>
+        <a class="sidebar-link" data-scroll-to="saved-places-section" title="Saved Places">⭐<span class="tooltip">Saved Places</span></a>
+        <a class="sidebar-link" data-scroll-to="visits-section" title="Visits">👣<span class="tooltip">Visit History</span></a>
+        <a class="sidebar-link" data-scroll-to="collections-section" title="Collections">📁<span class="tooltip">Collections</span></a>
+        <a class="sidebar-link" data-scroll-to="alerts-section" title="Alerts">🔔<span class="tooltip">Alerts &amp; Check-in</span></a>
+        <a class="sidebar-link" data-scroll-to="comparison-section" title="Compare">⚖️<span class="tooltip">Comparison</span></a>
+        <a class="sidebar-link" data-scroll-to="feed-section" title="Feed">📡<span class="tooltip">Feed</span></a>
+        <a class="sidebar-link" data-scroll-to="trips-section" title="Trips">✈️<span class="tooltip">Trips</span></a>
+        <a class="sidebar-link" data-scroll-to="websocket-section" title="WebSocket">🔌<span class="tooltip">WebSocket</span></a>
+      </div>
+      <div class="sidebar-footer">
+        <div class="connection-dot online" title="API Connection Status"></div>
+      </div>
+    </nav>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         MAIN CONTENT
+         ══════════════════════════════════════════════════════════════════ -->
+    <main class="main-content">
+      <!-- ── Header ──────────────────────────────────────────────── -->
+      <header class="page-header">
+        <h1>GeoMap API Tester</h1>
+        <p>Interactive dashboard for testing all backend API endpoints</p>
+        <div class="header-stats">
+          <span class="header-stat">🔌 <strong>16</strong> API Modules</span>
+          <span class="header-stat">📡 <strong>1</strong> WebSocket Endpoint</span>
+          <span class="header-stat">⚡ <strong>50+</strong> Endpoints</span>
+        </div>
+      </header>
+
+      <!-- ── Auth Bar ────────────────────────────────────────────── -->
+      <section class="auth-bar">
+        <label for="auth-token-input">🔑 Auth Token</label>
+        <input type="text" id="auth-token-input" spellcheck="false" autocomplete="off">
+        <span class="token-status empty">No token</span>
+        <button class="btn btn-ghost btn-sm" data-clear-token title="Clear token">✕ Clear</button>
+        <button class="btn btn-ghost btn-sm" data-quick-auth="login">Go to Login</button>
+      </section>
+
+      <!-- ── Search ──────────────────────────────────────────────── -->
+      <div class="search-bar">
+        <span class="search-icon">🔎</span>
+        <input type="text" id="section-search" placeholder="Search endpoints by name, path, or description...">
+      </div>
+
+      <!-- ════════════════════════════════════════════════════════════
+           API SECTIONS
+           ════════════════════════════════════════════════════════════ -->
+      <div class="api-sections">
+
+        {# ── 1. Authentication ─────────────────────────────────── #}
+        <article class="api-section" id="auth-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(88,166,255,0.15)">🔐</div>
+            <span class="section-title">Authentication</span>
+            <div class="section-meta"><span class="section-endpoint-count">6 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/auth/signup', summary='Register — sends OTP to email',
+              params=[
+                {'name': 'email', 'type': 'text', 'desc': 'User email address', 'required': true},
+                {'name': 'password', 'type': 'text', 'desc': 'Min 8 chars, 1 uppercase, 1 digit', 'required': true},
+                {'name': 'full_name', 'type': 'text', 'desc': 'User display name', 'required': true}
+              ],
+              body='{\n  "email": "user@example.com",\n  "password": "SecurePass1",\n  "full_name": "John Doe"\n}') }}
+
+            {{ endpoint(method='POST', path='/auth/verify-otp', summary='Verify OTP — create account & get tokens',
+              params=[
+                {'name': 'email', 'type': 'text', 'desc': 'Email used for signup', 'required': true},
+                {'name': 'otp', 'type': 'text', 'desc': '6-digit code from email', 'required': true}
+              ],
+              body='{\n  "email": "user@example.com",\n  "otp": "123456"\n}') }}
+
+            {{ endpoint(method='POST', path='/auth/login', summary='Login with email & password',
+              params=[
+                {'name': 'email', 'type': 'text', 'desc': 'Registered email', 'required': true},
+                {'name': 'password', 'type': 'text', 'desc': 'Account password', 'required': true}
+              ],
+              body='{\n  "email": "user@example.com",\n  "password": "SecurePass1"\n}') }}
+
+            {{ endpoint(method='GET', path='/auth/me', summary='Get current user profile', auth=true) }}
+
+            {{ endpoint(method='POST', path='/auth/refresh', summary='Exchange refresh token for new pair',
+              params=[{'name': 'refresh_token', 'type': 'text', 'desc': 'Refresh token from login', 'required': true}],
+              body='{\n  "refresh_token": "eyJ..."\n}') }}
+
+            {{ endpoint(method='POST', path='/auth/logout', summary='Logout — revoke tokens', auth=true,
+              params=[{'name': 'refresh_token', 'type': 'text', 'desc': 'Optional — also revoke refresh token'}],
+              body='{\n  "refresh_token": "eyJ..."\n}') }}
+          </div>
+        </article>
+
+        {# ── 2. Locations ──────────────────────────────────────── #}
+        <article class="api-section" id="locations-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(57,210,192,0.15)">📍</div>
+            <span class="section-title">Locations</span>
+            <div class="section-meta"><span class="section-endpoint-count">5 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='GET', path='/locations/me', summary='Get current active location', auth=true) }}
+            {{ endpoint(method='POST', path='/locations/gps', summary='GPS location update', auth=true,
+              params=[
+                {'name': 'latitude', 'type': 'text', 'desc': 'e.g. 28.6304', 'required': true},
+                {'name': 'longitude', 'type': 'text', 'desc': 'e.g. 77.2177', 'required': true},
+                {'name': 'accuracy', 'type': 'text', 'desc': 'Accuracy in meters, e.g. 10.0'}
+              ],
+              body='{\n  "latitude": 28.6304,\n  "longitude": 77.2177,\n  "accuracy": 10.0\n}') }}
+            {{ endpoint(method='PUT', path='/locations/manual', summary='Manually set location', auth=true,
+              params=[
+                {'name': 'latitude', 'type': 'text', 'desc': 'e.g. 28.6304', 'required': true},
+                {'name': 'longitude', 'type': 'text', 'desc': 'e.g. 77.2177', 'required': true},
+                {'name': 'label', 'type': 'text', 'desc': 'e.g. "Home" or "Office"'}
+              ],
+              body='{\n  "latitude": 28.6304,\n  "longitude": 77.2177,\n  "label": "Home"\n}') }}
+            {{ endpoint(method='GET', path='/locations/history', summary='Location history with pagination', auth=true,
+              params=[
+                {'name': 'page', 'type': 'text', 'desc': 'Page number (default 1)'},
+                {'name': 'page_size', 'type': 'text', 'desc': 'Items per page (max 100)'}]) }}
+            {{ endpoint(method='DELETE', path='/locations/current', summary='Deactivate current location (soft delete)', auth=true) }}
+          </div>
+        </article>
+
+        {# ── 3. Discovery ──────────────────────────────────────── #}
+        <article class="api-section" id="discovery-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(248,120,186,0.15)">🔍</div>
+            <span class="section-title">Discovery</span>
+            <div class="section-meta"><span class="section-endpoint-count">3 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/discovery/search', summary='Text search for places', auth=true,
+              params=[
+                {'name': 'text_query', 'type': 'text', 'desc': 'e.g. "best coffee near me"', 'required': true},
+                {'name': 'max_result_count', 'type': 'text', 'desc': 'Max results (default 20)'}
+              ],
+              body='{\n  "text_query": "best coffee near me",\n  "max_result_count": 20\n}') }}
+            {{ endpoint(method='POST', path='/discovery/nearby', summary='Nearby search from saved location', auth=true,
+              params=[
+                {'name': 'radius', 'type': 'text', 'desc': 'Search radius in meters (default 5000)', 'required': true},
+                {'name': 'preset', 'type': 'select', 'options': ['preferred_types', 'famous_places'], 'desc': 'Place type preset'}
+              ],
+              body='{\n  "radius": 5000,\n  "preset": "preferred_types"\n}') }}
+            {{ endpoint(method='GET', path='/discovery/autocomplete', summary='Place autocomplete', auth=true,
+              params=[
+                {'name': 'input', 'type': 'text', 'desc': 'Partial place name/address', 'required': true},
+                {'name': 'included_primary_types', 'type': 'text', 'desc': 'Comma-separated types filter'},
+                {'name': 'language_code', 'type': 'text', 'desc': 'e.g. "en" (default)'},
+                {'name': 'use_user_location_bias', 'type': 'select', 'options': ['true', 'false'], 'desc': 'Bias by user location'}
+              ]) }}
+          </div>
+        </article>
+
+        {# ── 4. Place Details + Knowledge Sync ─────────────────── #}
+        <article class="api-section" id="place-details-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(57,210,192,0.15)">🏪</div>
+            <span class="section-title">Place Details &amp; Knowledge</span>
+            <div class="section-meta"><span class="section-endpoint-count">2 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='GET', path='/places/{place_id}/details', summary='Get place details with photos & hours', auth=true,
+              params=[{'name': 'place_id', 'type': 'text', 'desc': 'Google Places Place ID', 'required': true, 'paramIn': 'path'}]) }}
+            {{ endpoint(method='POST', path='/places/{place_id}/knowledge-sync', summary='Sync Wikipedia knowledge (internal)', auth=true,
+              params=[
+                {'name': 'place_id', 'type': 'text', 'desc': 'Google Places Place ID', 'required': true, 'paramIn': 'path'},
+                {'name': 'force_resync', 'type': 'select', 'options': ['false', 'true'], 'desc': 'Force re-sync'}
+              ],
+              body='{\n  "force_resync": false\n}') }}
+          </div>
+        </article>
+
+        {# ── 5. Place Q&A ──────────────────────────────────────── #}
+        <article class="api-section" id="place-qa-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(188,140,255,0.15)">💬</div>
+            <span class="section-title">Place Q&amp;A</span>
+            <div class="section-meta"><span class="section-endpoint-count">5 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/places/{place_id}/question', summary='Ask a question about a place', auth=true, limit='20/min',
+              params=[
+                {'name': 'place_id', 'type': 'text', 'desc': 'Google Place ID', 'required': true, 'paramIn': 'path'},
+                {'name': 'question', 'type': 'text', 'desc': 'Your question', 'required': true}
+              ],
+              body='{\n  "question": "Is this place open on Sunday?",\n  "session_id": null\n}') }}
+            {{ endpoint(method='GET', path='/places/qa/sessions', summary='List Q&A sessions', auth=true, limit='30/min',
+              params=[
+                {'name': 'page', 'type': 'text', 'desc': 'Page number'},
+                {'name': 'page_size', 'type': 'text', 'desc': 'Items per page (max 50)'},
+                {'name': 'place_id', 'type': 'text', 'desc': 'Filter by place ID'},
+                {'name': 'search', 'type': 'text', 'desc': 'Search in session titles'},
+                {'name': 'sort', 'type': 'select', 'options': ['last_message', 'created_at', 'title'], 'desc': 'Sort order'}
+              ]) }}
+            {{ endpoint(method='GET', path='/places/qa/sessions/{session_id}', summary='Get session details & messages', auth=true,
+              params=[
+                {'name': 'session_id', 'type': 'text', 'desc': 'Session UUID', 'required': true, 'paramIn': 'path'},
+                {'name': 'page', 'type': 'text', 'desc': 'Message page'},
+                {'name': 'page_size', 'type': 'text', 'desc': 'Messages per page'}
+              ]) }}
+            {{ endpoint(method='PATCH', path='/places/qa/sessions/{session_id}', summary='Update session title', auth=true,
+              params=[{'name': 'session_id', 'type': 'text', 'desc': 'Session UUID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "title": "Updated Session Title"\n}') }}
+            {{ endpoint(method='DELETE', path='/places/qa/sessions', summary='Bulk delete sessions', auth=true,
+              params=[{'name': 'session_ids', 'type': 'text', 'desc': 'Comma-separated UUIDs to delete', 'required': true}]) }}
+          </div>
+        </article>
+
+        {# ── 6. AI Chat (Travel Agent) ─────────────────────────── #}
+        <article class="api-section" id="ai-chat-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(57,210,192,0.15)">🤖</div>
+            <span class="section-title">AI Chat — Travel Agent</span>
+            <div class="section-meta"><span class="section-endpoint-count">1 REST + WS</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/chat/message', summary='Chat with AI travel agent (REST)', auth=true, limit='30/min',
+              params=[{'name': 'query', 'type': 'text', 'desc': 'e.g. "Plan a 2-day trip to Jaipur"', 'required': true}],
+              body='{\n  "query": "Plan a 2-day trip to Jaipur",\n  "session_id": null\n}') }}
+          </div>
+        </article>
+
+        {# ── 7. Weather ─────────────────────────────────────────── #}
+        <article class="api-section" id="weather-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(210,153,34,0.15)">🌤️</div>
+            <span class="section-title">Weather</span>
+            <div class="section-meta"><span class="section-endpoint-count">2 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/weather/forecast', summary='Get weather forecast for saved location', auth=true,
+              params=[
+                {'name': 'start_date', 'type': 'text', 'desc': 'YYYY-MM-DD (default today)'},
+                {'name': 'end_date', 'type': 'text', 'desc': 'YYYY-MM-DD'}
+              ],
+              body='{\n  "start_date": "2026-06-24",\n  "end_date": "2026-06-26"\n}') }}
+            {{ endpoint(method='POST', path='/weather/air-quality', summary='Get air quality forecast', auth=true,
+              params=[
+                {'name': 'start_date', 'type': 'text', 'desc': 'YYYY-MM-DD (default today)'},
+                {'name': 'end_date', 'type': 'text', 'desc': 'YYYY-MM-DD'}
+              ],
+              body='{\n  "start_date": "2026-06-24",\n  "end_date": "2026-06-25"\n}') }}
+          </div>
+        </article>
+
+        {# ── 8. Routes ─────────────────────────────────────────── #}
+        <article class="api-section" id="routes-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(57,210,192,0.15)">🗺️</div>
+            <span class="section-title">Routes</span>
+            <div class="section-meta"><span class="section-endpoint-count">1 endpoint</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/routes/compute', summary='Compute route from user location to destination', auth=true,
+              params=[
+                {'name': 'place_id', 'type': 'text', 'desc': 'Destination Place ID'},
+                {'name': 'travel_mode', 'type': 'select', 'options': ['DRIVE', 'WALK', 'BICYCLE', 'TRANSIT'], 'desc': 'Mode of travel'}
+              ],
+              body='{\n  "place_id": "ChIJ...",\n  "travel_mode": "DRIVE"\n}') }}
+          </div>
+        </article>
+
+        {# ── 9. AI Personalization ─────────────────────────────── #}
+        <article class="api-section" id="ai-personalization-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(188,140,255,0.15)">✨</div>
+            <span class="section-title">AI — Personalization</span>
+            <div class="section-meta"><span class="section-endpoint-count">5 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/ai/digest', summary='Generate personalized activity digest', auth=true, limit='10/min',
+              params=[{'name': 'timeframe', 'type': 'select', 'options': ['daily', 'weekly', 'monthly'], 'desc': 'Digest timeframe'}],
+              body='{\n  "timeframe": "weekly"\n}') }}
+            {{ endpoint(method='POST', path='/ai/recommendations', summary='Get AI place recommendations', auth=true, limit='10/min',
+              body='{\n  "count": 5\n}') }}
+            {{ endpoint(method='POST', path='/ai/places/{place_id}/pitch', summary='Personalized place pitch', auth=true, limit='20/min',
+              params=[
+                {'name': 'place_id', 'type': 'text', 'desc': 'Google Place ID', 'required': true, 'paramIn': 'path'},
+                {'name': 'tone', 'type': 'select', 'options': ['engaging', 'professional', 'humorous', 'romantic', 'adventurous'], 'desc': 'Pitch tone'}
+              ],
+              body='{\n  "tone": "engaging"\n}') }}
+            {{ endpoint(method='POST', path='/ai/places/pitch/batch', summary='Batch pitch multiple places', auth=true, limit='10/min',
+              params=[
+                {'name': 'tone', 'type': 'select', 'options': ['engaging', 'professional', 'humorous', 'romantic', 'adventurous'], 'desc': 'Pitch tone'},
+                {'name': 'place_ids', 'type': 'text', 'desc': 'Comma-separated Place IDs'}
+              ],
+              body='{\n  "place_ids": ["ChIJ..."],\n  "tone": "engaging"\n}') }}
+            {{ endpoint(method='POST', path='/ai/explore', summary='Get explore suggestions for destination', auth=true, limit='10/min',
+              params=[
+                {'name': 'destination_city', 'type': 'text', 'desc': 'City name', 'required': true},
+                {'name': 'vibe', 'type': 'select', 'options': ['popular', 'hidden_gems', 'trending', 'romantic', 'adventure', 'family'], 'desc': 'Vibe/theme'}
+              ],
+              body='{\n  "destination_city": "Tokyo",\n  "vibe": "hidden_gems"\n}') }}
+          </div>
+        </article>
+
+        {# ── 10. Saved Places ─────────────────────────────────── #}
+        <article class="api-section" id="saved-places-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(210,153,34,0.15)">⭐</div>
+            <span class="section-title">Saved Places</span>
+            <div class="section-meta"><span class="section-endpoint-count">4 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/places/{place_id}/save', summary='Save or un-save a place (toggle)', auth=true, limit='30/min',
+              params=[{'name': 'place_id', 'type': 'text', 'desc': 'Place ID to save/unsave', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "notes": "Great place!",\n  "tags": ["want_to_visit"]\n}') }}
+            {{ endpoint(method='GET', path='/places/saved', summary='List saved places', auth=true, limit='30/min',
+              params=[
+                {'name': 'page', 'type': 'text', 'desc': 'Page number'},
+                {'name': 'page_size', 'type': 'text', 'desc': 'Items per page'},
+                {'name': 'tag', 'type': 'text', 'desc': 'Filter by tag'},
+                {'name': 'search', 'type': 'text', 'desc': 'Search by name'}
+              ]) }}
+            {{ endpoint(method='PATCH', path='/places/saved/{saved_id}', summary='Update saved place', auth=true,
+              params=[{'name': 'saved_id', 'type': 'text', 'desc': 'Saved place record ID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "notes": "Updated notes",\n  "tags": ["favorite"],\n  "is_archived": false\n}') }}
+            {{ endpoint(method='GET', path='/places/saved/nearby', summary='Saved places near a location', auth=true,
+              params=[
+                {'name': 'lat', 'type': 'text', 'desc': 'Latitude', 'required': true},
+                {'name': 'lon', 'type': 'text', 'desc': 'Longitude', 'required': true},
+                {'name': 'radius_km', 'type': 'text', 'desc': 'Search radius in km (default 2.0)'}
+              ]) }}
+          </div>
+        </article>
+
+        {# ── 11. Visit History ─────────────────────────────────── #}
+        <article class="api-section" id="visits-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(248,81,73,0.15)">👣</div>
+            <span class="section-title">Visit History</span>
+            <div class="section-meta"><span class="section-endpoint-count">5 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/places/{place_id}/visit', summary='Log a visit to a place', auth=true, limit='30/min',
+              params=[{'name': 'place_id', 'type': 'text', 'desc': 'Place ID visited', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "rating_given": 4,\n  "review_text": "Amazing place!",\n  "with_whom": "friends",\n  "mood": "happy"\n}') }}
+            {{ endpoint(method='GET', path='/visits', summary='List visit history', auth=true, limit='30/min',
+              params=[
+                {'name': 'page', 'type': 'text', 'desc': 'Page number'},
+                {'name': 'page_size', 'type': 'text', 'desc': 'Items per page'},
+                {'name': 'place_id', 'type': 'text', 'desc': 'Filter by place ID'}
+              ]) }}
+            {{ endpoint(method='PATCH', path='/visits/{visit_id}', summary='Update a visit log', auth=true, limit='30/min',
+              params=[{'name': 'visit_id', 'type': 'text', 'desc': 'Visit log ID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "rating_given": 5,\n  "review_text": "Even better!",\n  "mood": "excited"\n}') }}
+            {{ endpoint(method='DELETE', path='/visits/{visit_id}', summary='Delete a visit log entry', auth=true,
+              params=[{'name': 'visit_id', 'type': 'text', 'desc': 'Visit log ID', 'required': true, 'paramIn': 'path'}]) }}
+            {{ endpoint(method='GET', path='/visits/stats', summary='Get visit statistics', auth=true, limit='30/min') }}
+          </div>
+        </article>
+
+        {# ── 12. Collections ───────────────────────────────────── #}
+        <article class="api-section" id="collections-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(210,153,34,0.15)">📁</div>
+            <span class="section-title">Collections</span>
+            <div class="section-meta"><span class="section-endpoint-count">10 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/collections', summary='Create a new collection', auth=true, limit='20/min',
+              body='{\n  "title": "Best Cafes in Delhi",\n  "description": "My favorite coffee spots",\n  "is_public": true\n}') }}
+            {{ endpoint(method='GET', path='/collections', summary='List my collections', auth=true, limit='30/min',
+              params=[
+                {'name': 'page', 'type': 'text', 'desc': 'Page number'},
+                {'name': 'page_size', 'type': 'text', 'desc': 'Items per page'},
+                {'name': 'search', 'type': 'text', 'desc': 'Search by title'}
+              ]) }}
+            {{ endpoint(method='GET', path='/collections/public', summary='Browse public collections', auth=true, limit='30/min',
+              params=[
+                {'name': 'page', 'type': 'text', 'desc': 'Page number'},
+                {'name': 'page_size', 'type': 'text', 'desc': 'Items per page'},
+                {'name': 'search', 'type': 'text', 'desc': 'Search by title'}
+              ]) }}
+            {{ endpoint(method='GET', path='/collections/{collection_id}', summary='Get collection details', auth=true, limit='30/min',
+              params=[{'name': 'collection_id', 'type': 'text', 'desc': 'Collection ID', 'required': true, 'paramIn': 'path'}]) }}
+            {{ endpoint(method='GET', path='/collections/shared/{share_code}', summary='View shared collection (no auth required)', limit='30/min',
+              params=[{'name': 'share_code', 'type': 'text', 'desc': '8-char share code', 'required': true, 'paramIn': 'path'}]) }}
+            {{ endpoint(method='PATCH', path='/collections/{collection_id}', summary='Update collection', auth=true, limit='20/min',
+              params=[{'name': 'collection_id', 'type': 'text', 'desc': 'Collection ID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "title": "Updated Title",\n  "description": "Updated description",\n  "is_public": true\n}') }}
+            {{ endpoint(method='DELETE', path='/collections/{collection_id}', summary='Delete a collection', auth=true, limit='20/min',
+              params=[{'name': 'collection_id', 'type': 'text', 'desc': 'Collection ID', 'required': true, 'paramIn': 'path'}]) }}
+            {{ endpoint(method='POST', path='/collections/{collection_id}/places', summary='Add place to collection', auth=true, limit='30/min',
+              params=[{'name': 'collection_id', 'type': 'text', 'desc': 'Collection ID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "place_id": "ChIJ...",\n  "notes": "Must visit!",\n  "rank_order": 1\n}') }}
+            {{ endpoint(method='DELETE', path='/collections/{collection_id}/places/{place_cp_id}', summary='Remove place from collection', auth=true, limit='30/min',
+              params=[
+                {'name': 'collection_id', 'type': 'text', 'desc': 'Collection ID', 'required': true, 'paramIn': 'path'},
+                {'name': 'place_cp_id', 'type': 'text', 'desc': 'Collection-Place ID', 'required': true, 'paramIn': 'path'}
+              ]) }}
+            {{ endpoint(method='PATCH', path='/collections/{collection_id}/places/reorder', summary='Reorder places in collection', auth=true,
+              params=[{'name': 'collection_id', 'type': 'text', 'desc': 'Collection ID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "place_ids": [1, 3, 2, 4]\n}') }}
+          </div>
+        </article>
+
+        {# ── 13. Alerts & Check-in ─────────────────────────────── #}
+        <article class="api-section" id="alerts-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(248,81,73,0.15)">🔔</div>
+            <span class="section-title">Alerts &amp; Check-in</span>
+            <div class="section-meta"><span class="section-endpoint-count">6 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/places/alerts', summary='Create/toggle proximity alert', auth=true, limit='30/min',
+              params=[
+                {'name': 'place_id', 'type': 'text', 'desc': 'Place ID', 'required': true},
+                {'name': 'radius_meters', 'type': 'text', 'desc': 'Radius in meters'},
+                {'name': 'remind_on_approach', 'type': 'select', 'options': ['true', 'false'], 'desc': 'Remind when near'}
+              ],
+              body='{\n  "place_id": "ChIJ...",\n  "radius_meters": 500,\n  "remind_on_approach": true\n}') }}
+            {{ endpoint(method='GET', path='/places/alerts', summary='List my alerts', auth=true, limit='30/min',
+              params=[
+                {'name': 'page', 'type': 'text', 'desc': 'Page number'},
+                {'name': 'page_size', 'type': 'text', 'desc': 'Items per page'},
+                {'name': 'is_active', 'type': 'select', 'options': ['', 'true', 'false'], 'desc': 'Filter by active/paused'}
+              ]) }}
+            {{ endpoint(method='PATCH', path='/places/alerts/{alert_id}', summary='Update an alert', auth=true, limit='30/min',
+              params=[{'name': 'alert_id', 'type': 'text', 'desc': 'Alert ID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "radius_meters": 300,\n  "is_active": true\n}') }}
+            {{ endpoint(method='DELETE', path='/places/alerts/{alert_id}', summary='Delete an alert', auth=true, limit='30/min',
+              params=[{'name': 'alert_id', 'type': 'text', 'desc': 'Alert ID', 'required': true, 'paramIn': 'path'}]) }}
+            {{ endpoint(method='POST', path='/places/{place_id}/checkin', summary='Check in with GPS verification', auth=true, limit='30/min',
+              params=[{'name': 'place_id', 'type': 'text', 'desc': 'Place ID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "latitude": 28.6304,\n  "longitude": 77.2177,\n  "notes": "Great visit!"\n}') }}
+            {{ endpoint(method='POST', path='/places/alerts/nearby', summary='Find active alerts near location', auth=true, limit='30/min',
+              body='{\n  "latitude": 28.6304,\n  "longitude": 77.2177,\n  "max_radius_meters": 1000\n}') }}
+          </div>
+        </article>
+
+        {# ── 14. Comparison ────────────────────────────────────── #}
+        <article class="api-section" id="comparison-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(188,140,255,0.15)">⚖️</div>
+            <span class="section-title">Comparison</span>
+            <div class="section-meta"><span class="section-endpoint-count">2 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/compare', summary='Compare 2-10 places side-by-side', auth=true,
+              body='{\n  "place_ids": ["ChIJ...", "ChIJ..."]\n}') }}
+            {{ endpoint(method='GET', path='/compare/batch', summary='Compare via GET (comma-separated IDs)', auth=true,
+              params=[{'name': 'ids', 'type': 'text', 'desc': 'Comma-separated place IDs (2-10)', 'required': true}]) }}
+          </div>
+        </article>
+
+        {# ── 15. Feed ──────────────────────────────────────────── #}
+        <article class="api-section" id="feed-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(57,210,192,0.15)">📡</div>
+            <span class="section-title">Feed — Explore &amp; Activity</span>
+            <div class="section-meta"><span class="section-endpoint-count">3 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='GET', path='/feed/explore', summary='Get personalized explore feed', auth=true, limit='30/min',
+              params=[
+                {'name': 'lat', 'type': 'text', 'desc': 'Latitude for nearby bias'},
+                {'name': 'lon', 'type': 'text', 'desc': 'Longitude for nearby bias'}
+              ]) }}
+            {{ endpoint(method='GET', path='/feed/activity', summary='Get user activity stream', auth=true, limit='30/min',
+              params=[
+                {'name': 'page', 'type': 'text', 'desc': 'Page number'},
+                {'name': 'page_size', 'type': 'text', 'desc': 'Items per page (max 50)'}
+              ]) }}
+            {{ endpoint(method='GET', path='/feed/activity/counts', summary='Get activity summary counts', auth=true, limit='30/min') }}
+          </div>
+        </article>
+
+        {# ── 16. Trips ─────────────────────────────────────────── #}
+        <article class="api-section" id="trips-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(63,185,80,0.15)">✈️</div>
+            <span class="section-title">Trips</span>
+            <div class="section-meta"><span class="section-endpoint-count">11 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='POST', path='/trips', summary='Create a new trip', auth=true,
+              body='{\n  "title": "Weekend in Shimla",\n  "description": "Mountain getaway",\n  "start_date": "2026-07-01",\n  "end_date": "2026-07-03",\n  "destination_city": "Shimla"\n}') }}
+            {{ endpoint(method='GET', path='/trips', summary='List user trips', auth=true,
+              params=[
+                {'name': 'page', 'type': 'text', 'desc': 'Page number'},
+                {'name': 'page_size', 'type': 'text', 'desc': 'Items per page'},
+                {'name': 'search', 'type': 'text', 'desc': 'Search by title'},
+                {'name': 'status', 'type': 'select', 'options': ['', 'upcoming', 'past', 'completed'], 'desc': 'Filter by status'}
+              ]) }}
+            {{ endpoint(method='GET', path='/trips/{trip_id}', summary='Get trip details', auth=true,
+              params=[{'name': 'trip_id', 'type': 'text', 'desc': 'Trip ID', 'required': true, 'paramIn': 'path'}]) }}
+            {{ endpoint(method='PATCH', path='/trips/{trip_id}', summary='Update trip details', auth=true,
+              params=[{'name': 'trip_id', 'type': 'text', 'desc': 'Trip ID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "title": "Updated Title",\n  "description": "Updated description"\n}') }}
+            {{ endpoint(method='DELETE', path='/trips/{trip_id}', summary='Delete a trip', auth=true,
+              params=[{'name': 'trip_id', 'type': 'text', 'desc': 'Trip ID', 'required': true, 'paramIn': 'path'}]) }}
+            {{ endpoint(method='POST', path='/trips/{trip_id}/places', summary='Add place to trip', auth=true,
+              params=[{'name': 'trip_id', 'type': 'text', 'desc': 'Trip ID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "place_id": "ChIJ...",\n  "day_number": 1,\n  "visit_order": 1,\n  "notes": "Visit in the morning"\n}') }}
+            {{ endpoint(method='DELETE', path='/trips/{trip_id}/places/{place_tp_id}', summary='Remove place from trip', auth=true,
+              params=[
+                {'name': 'trip_id', 'type': 'text', 'desc': 'Trip ID', 'required': true, 'paramIn': 'path'},
+                {'name': 'place_tp_id', 'type': 'text', 'desc': 'Trip-Place ID', 'required': true, 'paramIn': 'path'}
+              ]) }}
+            {{ endpoint(method='PATCH', path='/trips/{trip_id}/places/reorder', summary='Reorder places in a day', auth=true,
+              params=[{'name': 'trip_id', 'type': 'text', 'desc': 'Trip ID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "day_number": 1,\n  "ordered_place_ids": [1, 3, 2]\n}') }}
+            {{ endpoint(method='PATCH', path='/trips/{trip_id}/places/{place_tp_id}/move', summary='Move place to different day', auth=true,
+              params=[
+                {'name': 'trip_id', 'type': 'text', 'desc': 'Trip ID', 'required': true, 'paramIn': 'path'},
+                {'name': 'place_tp_id', 'type': 'text', 'desc': 'Trip-Place ID', 'required': true, 'paramIn': 'path'}
+              ],
+              body='{\n  "new_day_number": 2,\n  "new_visit_order": 1\n}') }}
+            {{ endpoint(method='POST', path='/trips/{trip_id}/optimize', summary='AI-optimize trip order', auth=true,
+              params=[{'name': 'trip_id', 'type': 'text', 'desc': 'Trip ID', 'required': true, 'paramIn': 'path'}],
+              body='{\n  "day_number": 1\n}') }}
+            {{ endpoint(method='POST', path='/trips/suggest', summary='AI-suggest places for a trip', auth=true,
+              body='{\n  "destination_city": "Goa",\n  "total_days": 3,\n  "preferences": "beaches, seafood"\n}') }}
+          </div>
+        </article>
+
+        {# ── 17. WebSocket ─────────────────────────────────────── #}
+        <article class="api-section" id="websocket-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(210,153,34,0.15)">🔌</div>
+            <span class="section-title">WebSocket — Streaming Chat</span>
+            <div class="section-meta"><span class="section-endpoint-count">1 WebSocket endpoint</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            <div class="ws-panel">
+              <div class="ws-controls">
+                <button id="ws-connect" class="btn btn-primary btn-sm">🔗 Connect</button>
+                <button id="ws-disconnect" class="btn btn-danger btn-sm" disabled>🔌 Disconnect</button>
+                <span id="ws-status" class="ws-status disconnected">Disconnected</span>
+              </div>
+              <div class="param-group">
+                <label class="param-label">Message Type</label>
+                <div class="param-row">
+                  <select id="ws-msg-type">
+                    <option value="chat_message">💬 Chat Message</option>
+                    <option value="place_question">🏪 Place Question</option>
+                  </select>
+                </div>
+              </div>
+              <div class="param-group">
+                <label class="param-label">Quick Fill Examples</label>
+                <div class="flex gap-2 flex-wrap">
+                  <button class="btn btn-ghost btn-sm" data-ws-fill="chat">💬 Chat Message</button>
+                  <button class="btn btn-ghost btn-sm" data-ws-fill="place_qa">🏪 Place Question</button>
+                </div>
+              </div>
+              <div class="param-group">
+                <label class="param-label">Message Payload (JSON)</label>
+                <div class="param-row">
+                  <input type="text" id="ws-input" placeholder='{"query": "Plan a trip", "session_id": null}' spellcheck="false">
+                  <button id="ws-send" class="btn btn-success btn-sm" disabled>📤 Send</button>
+                </div>
+              </div>
+              <div class="param-group">
+                <label class="param-label">Event Log</label>
+                <div id="ws-log" class="ws-log">
+                  <div class="ws-log-entry"><span class="ws-info">ℹ️ Connect to start streaming</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+      </div><!-- /.api-sections -->
+
+      <footer style="margin-top:48px;padding-top:24px;border-top:1px solid var(--border-primary);text-align:center;color:var(--text-muted);font-size:12px;">
+        GeoMap API Tester v3.0.0 &mdash; Built with FastAPI + Jinja2
+      </footer>
+    </main>
+  </div>
+
+  <button class="scroll-top" title="Scroll to top">↑</button>
+  <script src="/ui/static/js/app.js"></script>
+</body>
+</html>

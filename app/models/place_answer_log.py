@@ -1,4 +1,12 @@
-from sqlalchemy import (Column, DateTime, Float, ForeignKey,Integer, String, Text,)
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from app.database.base import Base
@@ -31,4 +39,8 @@ class PlaceAnswerLog(Base):
     context_tokens = Column(Integer, nullable=True)
     model_used = Column(String(100), nullable=True)
     latency_ms = Column(Integer, nullable=True)
-    created_at = Column(DateTime(timezone=True),server_default=func.now(),nullable=False,)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )

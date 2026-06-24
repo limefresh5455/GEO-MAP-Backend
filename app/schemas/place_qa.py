@@ -1,35 +1,39 @@
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Answer source constants
 # ---------------------------------------------------------------------------
 
+
 class AnswerSource:
-    RAG             = "rag"              # Pinecone retrieval + structured facts
-    STRUCTURED_ONLY = "structured_only" # PG structured data only (no Pinecone match)
-    FALLBACK        = "fallback"         # No knowledge synced — minimal answer
+    RAG = "rag"  # Pinecone retrieval + structured facts
+    STRUCTURED_ONLY = "structured_only"  # PG structured data only (no Pinecone match)
+    FALLBACK = "fallback"  # No knowledge synced — minimal answer
 
 
 # ---------------------------------------------------------------------------
 # Supporting evidence fragment — shown to the frontend for transparency
 # ---------------------------------------------------------------------------
 
+
 class GroundingFragment(BaseModel):
     """
     A single supporting fact chunk used to ground the answer.
     Returned to the frontend so it can render source attribution.
     """
-    section: str                    # which document section this came from
-    text: str                       # the chunk text used as context
-    similarity_score: float         # Pinecone cosine similarity (0.0–1.0)
-    source_type: str                # "pinecone" | "structured_db"
+
+    section: str  # which document section this came from
+    text: str  # the chunk text used as context
+    similarity_score: float  # Pinecone cosine similarity (0.0–1.0)
+    source_type: str  # "pinecone" | "structured_db"
 
 
 # ---------------------------------------------------------------------------
 # Request
 # ---------------------------------------------------------------------------
+
 
 class PlaceQuestionRequest(BaseModel):
     question: str = Field(
@@ -40,9 +44,10 @@ class PlaceQuestionRequest(BaseModel):
     )
     session_id: Optional[str] = Field(
         default=None,
-        min_length=36,
-        max_length=36,
-        description="UUID v4 session ID to continue conversation (optional)",
+        description=(
+            "UUID v4 session ID to continue an existing conversation. "
+            "Omit, set to null, or pass empty string to start a new session."
+        ),
     )
     top_k: int = Field(
         default=5,
@@ -66,8 +71,10 @@ class PlaceQuestionRequest(BaseModel):
 # Response
 # ---------------------------------------------------------------------------
 
+
 class TechnicalMetadata(BaseModel):
     """Technical details for debugging (optional, not shown by default)."""
+
     answer_source: str
     confidence_score: Optional[float] = None
     knowledge_synced: bool
@@ -95,6 +102,7 @@ class PlaceQuestionResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Session Management Schemas
 # ---------------------------------------------------------------------------
+
 
 class PlaceQAMessageSchema(BaseModel):
     id: int
@@ -139,6 +147,7 @@ class PlaceQASessionDetail(BaseModel):
     class Config:
         from_attributes = True
 
+
 class ListPlaceQASessionsResponse(BaseModel):
     success: bool = True
     sessions: List[PlaceQASessionListItem]
@@ -167,12 +176,22 @@ class DeletePlaceQASessionResponse(BaseModel):
 
 class UpdateSessionRequest(BaseModel):
     """Request to update session metadata."""
+
     title: Optional[str] = Field(None, max_length=255)
     archived: Optional[bool] = None
 
 
+class DeletePlaceQASessionsRequest(BaseModel):
+    """Request body for bulk deleting Q&A sessions."""
+
+    session_ids: List[str] = Field(
+        ..., min_length=1, description="Session UUIDs to delete"
+    )
+
+
 class UpdateSessionResponse(BaseModel):
     """Response after updating session."""
+
     success: bool = True
     session_id: str
     title: str

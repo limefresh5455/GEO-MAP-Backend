@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
@@ -6,9 +6,11 @@ from pydantic import BaseModel, Field
 # Sub-objects that match Google's nested structures
 # ---------------------------------------------------------------------------
 
+
 class OpeningHoursPeriod(BaseModel):
     """A single open/close period within a day."""
-    open_day: Optional[int] = None     # 0=Sunday … 6=Saturday
+
+    open_day: Optional[int] = None  # 0=Sunday … 6=Saturday
     open_hour: Optional[int] = None
     open_minute: Optional[int] = None
     close_day: Optional[int] = None
@@ -18,30 +20,34 @@ class OpeningHoursPeriod(BaseModel):
 
 class OpeningHours(BaseModel):
     """Structured opening hours snapshot from Google."""
+
     open_now: Optional[bool] = None
-    weekday_descriptions: Optional[List[str]] = None   # human-readable lines
+    weekday_descriptions: Optional[List[str]] = None  # human-readable lines
     periods: Optional[List[OpeningHoursPeriod]] = None
 
 
 class PlacePhoto(BaseModel):
     """Minimal photo reference — full URL requires a separate Photos API call."""
-    name: Optional[str] = None         # resource name: "places/{id}/photos/{ref}"
+
+    name: Optional[str] = None  # resource name: "places/{id}/photos/{ref}"
     width_px: Optional[int] = None
     height_px: Optional[int] = None
 
 
 class PlaceReview(BaseModel):
     """Single user review as returned by Google."""
+
     author_name: Optional[str] = None
     rating: Optional[float] = None
     text: Optional[str] = None
-    publish_time: Optional[str] = None   # ISO-8601 string from Google
+    publish_time: Optional[str] = None  # ISO-8601 string from Google
     relative_publish_time_description: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
 # Full place detail result
 # ---------------------------------------------------------------------------
+
 
 class PlaceDetailResult(BaseModel):
     place_id: str
@@ -69,7 +75,7 @@ class PlaceDetailResult(BaseModel):
     # Status & hours
     business_status: Optional[str] = None
     opening_hours: Optional[OpeningHours] = None
-    open_now: Optional[bool] = None            # convenience shortcut
+    open_now: Optional[bool] = None  # convenience shortcut
 
     # Rich data
     photos: Optional[List[PlacePhoto]] = None
@@ -82,6 +88,9 @@ class PlaceDetailResult(BaseModel):
     # Editorial
     editorial_summary: Optional[str] = None
 
+    # Extended data from Google (parking, payment, dining, services, etc.)
+    extended_data: Optional[Dict[str, Any]] = None
+
     # Metadata
     last_fetched_at: Optional[datetime] = None
     knowledge_synced: Optional[bool] = None
@@ -93,20 +102,22 @@ class PlaceDetailResult(BaseModel):
 # API response envelope
 # ---------------------------------------------------------------------------
 
+
 class PlaceDetailsResponse(BaseModel):
     """Standard response envelope for GET /api/v1/places/{place_id}/details."""
 
     success: bool
-    source: str                        # "google_places" | "redis_cache" | "database"
+    source: str  # "google_places" | "redis_cache" | "database"
     message: str
     data: PlaceDetailResult
     cached: bool
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
 # Internal: data source constants (not exposed to client)
 # ---------------------------------------------------------------------------
+
 
 class DetailSource:
     GOOGLE = "google_places"

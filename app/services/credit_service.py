@@ -5,6 +5,7 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
+
 class CreditService:
     """Small service for checking and deducting user credits."""
 
@@ -20,12 +21,7 @@ class CreditService:
 
     @staticmethod
     async def deduct(db: Session, user_id: int, amount: int) -> int:
-        user = (
-            db.query(User)
-            .filter(User.id == user_id)
-            .with_for_update()
-            .first()
-        )
+        user = db.query(User).filter(User.id == user_id).with_for_update().first()
         if user is None:
             raise NotFoundError(f"User {user_id} not found")
 

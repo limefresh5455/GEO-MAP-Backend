@@ -46,7 +46,7 @@ class LocationRepository:
         if not rows:
             return [], 0
         items = [row[0] for row in rows]
-        total = rows[0][1]   # all rows carry the same window count
+        total = rows[0][1]  # all rows carry the same window count
         return items, total
 
     # ------------------------------------------------------------------
@@ -54,11 +54,19 @@ class LocationRepository:
     # ------------------------------------------------------------------
 
     def deactivate_current_location(self, user_id: int) -> None:
-        """Mark all current locations for a user as no longer current."""
+        """
+        Mark all current locations for a user as no longer current.
+
+        Uses synchronize_session='evaluate' so SQLAlchemy expires matching
+        in-memory session objects after the bulk UPDATE. This prevents
+        subsequent reads in the same transaction from returning stale
+        objects with is_current=True, without the extra SELECT overhead
+        of 'fetch'.
+        """
         self.db.query(UserLocation).filter(
             UserLocation.user_id == user_id,
             UserLocation.is_current == True,
-        ).update({"is_current": False}, synchronize_session=False)
+        ).update({"is_current": False}, synchronize_session="evaluate")
 
     def create_location(self, user_id: int, **kwargs) -> UserLocation:
         """Insert a new UserLocation record and return it."""
@@ -83,6 +91,10 @@ class LocationRepository:
         """
         Logically deactivate the current location.
         Returns True if a record was found and updated.
+
+        Uses synchronize_session='evaluate' so matching in-memory session
+        objects are expired, preventing stale reads without the extra
+        SELECT overhead of 'fetch'.
         """
         updated = (
             self.db.query(UserLocation)
@@ -93,7 +105,7 @@ class LocationRepository:
             )
             .update(
                 {"is_current": False, "is_active": False},
-                synchronize_session=False,
+                synchronize_session="evaluate",
             )
         )
         return updated > 0

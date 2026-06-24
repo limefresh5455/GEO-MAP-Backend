@@ -1,7 +1,7 @@
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
@@ -16,7 +16,7 @@ def _compute_content_hash(detail: PlaceDetailResult) -> str:
         str(detail.display_name or ""),
         str(detail.formatted_address or ""),
         str(detail.primary_type or ""),
-        str(detail.types or []),  # No sorting — order matters for hash
+        str(sorted(detail.types) if detail.types else []),
         str(detail.international_phone_number or ""),
         str(detail.national_phone_number or ""),
         str(detail.website_uri or ""),
@@ -28,6 +28,7 @@ def _compute_content_hash(detail: PlaceDetailResult) -> str:
         str(detail.price_level or ""),
         str(detail.wheelchair_accessible_entrance or ""),
         str(detail.editorial_summary or ""),
+        str(detail.extended_data or ""),
         # Stringify nested JSONB-bound fields for comparison
         str(detail.opening_hours.model_dump() if detail.opening_hours else ""),
         str([r.model_dump() for r in detail.reviews] if detail.reviews else ""),
@@ -41,18 +42,22 @@ def _to_dict(obj: Any) -> Any:
         return None
     if isinstance(obj, list):
         return [_to_dict(item) for item in obj]
-    if hasattr(obj, "model_dump"):          # Pydantic v2
+    if hasattr(obj, "model_dump"):  # Pydantic v2
         return obj.model_dump()
     if isinstance(obj, dict):
         return {k: _to_dict(v) for k, v in obj.items()}
     return obj
+
 
 def _rehydrate_opening_hours(data: Optional[Dict]) -> Optional[Any]:
     """Silently returns None on any deserialisation error."""
     if not data:
         return None
     try:
-        from app.schemas.place_details import OpeningHours  # local import avoids circular
+        from app.schemas.place_details import (
+            OpeningHours,
+        )  # local import avoids circular
+
         return OpeningHours(**data)
     except Exception:
         return None
@@ -63,7 +68,10 @@ def _rehydrate_reviews(data: Optional[list]) -> Optional[list]:
     if not data:
         return None
     try:
-        from app.schemas.place_details import PlaceReview  # local import avoids circular
+        from app.schemas.place_details import (
+            PlaceReview,
+        )  # local import avoids circular
+
         return [PlaceReview(**r) for r in data]
     except Exception:
         return None
@@ -80,9 +88,7 @@ class PlaceDetailsRepository:
     def get_by_place_id(self, place_id: str) -> Optional[PlaceDetail]:
         """Return the stored record for a place_id, or None if absent."""
         return (
-            self.db.query(PlaceDetail)
-            .filter(PlaceDetail.place_id == place_id)
-            .first()
+            self.db.query(PlaceDetail).filter(PlaceDetail.place_id == place_id).first()
         )
 
     def mark_knowledge_synced(self, place_id: str) -> bool:
@@ -93,71 +99,75 @@ class PlaceDetailsRepository:
         )
         return updated > 0
 
+    def _apply_detail_to_record(self, record: PlaceDetail, detail: PlaceDetailResult, content_changed: bool, now_utc: datetime) -> None:
+        """Apply PlaceDetailResult fields to an existing PlaceDetail record."""
+        record.display_name = detail.display_name
+        record.formatted_address = detail.formatted_address
+        record.latitude = detail.latitude
+        record.longitude = detail.longitude
+        record.primary_type = detail.primary_type
+        record.types = detail.types
+        record.international_phone_number = detail.international_phone_number
+        record.national_phone_number = detail.national_phone_number
+        record.website_uri = detail.website_uri
+        record.google_maps_uri = detail.google_maps_uri
+        record.rating = detail.rating
+        record.user_rating_count = detail.user_rating_count
+        record.business_status = detail.business_status
+        record.opening_hours = _to_dict(detail.opening_hours)
+        record.open_now = detail.open_now
+        record.photos = _to_dict(detail.photos)
+        record.reviews = _to_dict(detail.reviews)
+        record.price_level = detail.price_level
+        record.wheelchair_accessible_entrance = detail.wheelchair_accessible_entrance
+        record.editorial_summary = detail.editorial_summary
+        record.extended_data = detail.extended_data
+        record.last_fetched_at = now_utc
+
+        if content_changed:
+            record.knowledge_synced = False
+
+    def _compute_hash_for_record(self, record: PlaceDetail) -> str:
+        """Compute content hash from an existing DB record for comparison."""
+        return _compute_content_hash(
+            PlaceDetailResult(
+                place_id=record.place_id,
+                display_name=record.display_name,
+                formatted_address=record.formatted_address,
+                primary_type=record.primary_type,
+                types=record.types,
+                international_phone_number=record.international_phone_number,
+                national_phone_number=record.national_phone_number,
+                website_uri=record.website_uri,
+                google_maps_uri=record.google_maps_uri,
+                rating=record.rating,
+                user_rating_count=record.user_rating_count,
+                business_status=record.business_status,
+                open_now=record.open_now,
+                price_level=record.price_level,
+                wheelchair_accessible_entrance=record.wheelchair_accessible_entrance,
+                editorial_summary=record.editorial_summary,
+                opening_hours=_rehydrate_opening_hours(record.opening_hours),
+                reviews=_rehydrate_reviews(record.reviews),
+            )
+        )
+
     def upsert(self, detail: PlaceDetailResult) -> PlaceDetail:
         existing = self.get_by_place_id(detail.place_id)
 
-        opening_hours_dict = _to_dict(detail.opening_hours)
-        photos_list = _to_dict(detail.photos)
-        reviews_list = _to_dict(detail.reviews)
         types_list = detail.types  # already a plain list[str] or None
 
         now_utc = datetime.now(timezone.utc)
 
         if existing:
             new_content_hash = _compute_content_hash(detail)
-            existing_content_hash = _compute_content_hash(
-                PlaceDetailResult(
-                    place_id=existing.place_id,
-                    display_name=existing.display_name,
-                    formatted_address=existing.formatted_address,
-                    primary_type=existing.primary_type,
-                    types=existing.types,
-                    international_phone_number=existing.international_phone_number,
-                    national_phone_number=existing.national_phone_number,
-                    website_uri=existing.website_uri,
-                    google_maps_uri=existing.google_maps_uri,
-                    rating=existing.rating,
-                    user_rating_count=existing.user_rating_count,
-                    business_status=existing.business_status,
-                    open_now=existing.open_now,
-                    price_level=existing.price_level,
-                    wheelchair_accessible_entrance=existing.wheelchair_accessible_entrance,
-                    editorial_summary=existing.editorial_summary,
-                    opening_hours=_rehydrate_opening_hours(existing.opening_hours),
-                    reviews=_rehydrate_reviews(existing.reviews),
-                )
-            )
-            content_changed = (new_content_hash != existing_content_hash)
+            existing_content_hash = self._compute_hash_for_record(existing)
+            content_changed = new_content_hash != existing_content_hash
 
             # Update in place — upsert semantics
-            existing.display_name = detail.display_name
-            existing.formatted_address = detail.formatted_address
-            existing.latitude = detail.latitude
-            existing.longitude = detail.longitude
-            existing.primary_type = detail.primary_type
-            existing.types = types_list
-            existing.international_phone_number = detail.international_phone_number
-            existing.national_phone_number = detail.national_phone_number
-            existing.website_uri = detail.website_uri
-            existing.google_maps_uri = detail.google_maps_uri
-            existing.rating = detail.rating
-            existing.user_rating_count = detail.user_rating_count
-            existing.business_status = detail.business_status
-            existing.opening_hours = opening_hours_dict
-            existing.open_now = detail.open_now
-            existing.photos = photos_list
-            existing.reviews = reviews_list
-            existing.price_level = detail.price_level
-            existing.wheelchair_accessible_entrance = (
-                detail.wheelchair_accessible_entrance
-            )
-            existing.editorial_summary = detail.editorial_summary
-            existing.last_fetched_at = now_utc
+            self._apply_detail_to_record(existing, detail, content_changed, now_utc)
 
-            # B02: Only invalidate knowledge_synced when content actually changed.
-            # Keeps the Pinecone vectors valid when data is unchanged.
             if content_changed:
-                existing.knowledge_synced = False
                 logger.debug(
                     "PlaceDetail content changed — knowledge_synced reset: place_id=%s",
                     detail.place_id,
@@ -188,17 +198,18 @@ class PlaceDetailsRepository:
             rating=detail.rating,
             user_rating_count=detail.user_rating_count,
             business_status=detail.business_status,
-            opening_hours=opening_hours_dict,
+            opening_hours=_to_dict(detail.opening_hours),
             open_now=detail.open_now,
-            photos=photos_list,
-            reviews=reviews_list,
+            photos=_to_dict(detail.photos),
+            reviews=_to_dict(detail.reviews),
             price_level=detail.price_level,
             wheelchair_accessible_entrance=detail.wheelchair_accessible_entrance,
             editorial_summary=detail.editorial_summary,
+            extended_data=detail.extended_data,
             last_fetched_at=now_utc,
             knowledge_synced=False,
         )
-        
+
         try:
             self.db.add(record)
             self.db.flush()
@@ -206,80 +217,36 @@ class PlaceDetailsRepository:
             return record
         except Exception as e:
             # B059 FIX: Handle concurrent insert race condition.
-            # If two requests both check and find no row, both try to insert.
-            # Second insert fails on unique constraint. Catch it, rollback, and
-            # re-query to get the winner's row, then proceed with update logic.
             from sqlalchemy.exc import IntegrityError
+
             if isinstance(e, IntegrityError) and "place_id" in str(e.orig).lower():
                 logger.warning(
                     "Concurrent upsert detected for place_id=%s — another request "
                     "inserted first. Rolling back and updating the existing row.",
-                    detail.place_id
+                    detail.place_id,
                 )
                 self.db.rollback()
                 # Re-query the row that the concurrent request inserted
                 existing = self.get_by_place_id(detail.place_id)
                 if not existing:
-                    # Should never happen, but defensive programming
                     logger.error(
                         "Race condition recovery failed — place_id=%s not found after rollback",
-                        detail.place_id
+                        detail.place_id,
                     )
                     raise
-                
-                # Update the existing row (same logic as above update branch)
+
+                # Use shared method for update logic
                 new_content_hash = _compute_content_hash(detail)
-                existing_content_hash = _compute_content_hash(
-                    PlaceDetailResult(
-                        place_id=existing.place_id,
-                        display_name=existing.display_name,
-                        formatted_address=existing.formatted_address,
-                        primary_type=existing.primary_type,
-                        types=existing.types,
-                        international_phone_number=existing.international_phone_number,
-                        national_phone_number=existing.national_phone_number,
-                        website_uri=existing.website_uri,
-                        google_maps_uri=existing.google_maps_uri,
-                        rating=existing.rating,
-                        user_rating_count=existing.user_rating_count,
-                        business_status=existing.business_status,
-                        open_now=existing.open_now,
-                        price_level=existing.price_level,
-                        wheelchair_accessible_entrance=existing.wheelchair_accessible_entrance,
-                        editorial_summary=existing.editorial_summary,
-                        opening_hours=_rehydrate_opening_hours(existing.opening_hours),
-                        reviews=_rehydrate_reviews(existing.reviews),
-                    )
-                )
-                content_changed = (new_content_hash != existing_content_hash)
-                
-                existing.display_name = detail.display_name
-                existing.formatted_address = detail.formatted_address
-                existing.latitude = detail.latitude
-                existing.longitude = detail.longitude
-                existing.primary_type = detail.primary_type
-                existing.types = types_list
-                existing.international_phone_number = detail.international_phone_number
-                existing.national_phone_number = detail.national_phone_number
-                existing.website_uri = detail.website_uri
-                existing.google_maps_uri = detail.google_maps_uri
-                existing.rating = detail.rating
-                existing.user_rating_count = detail.user_rating_count
-                existing.business_status = detail.business_status
-                existing.opening_hours = opening_hours_dict
-                existing.open_now = detail.open_now
-                existing.photos = photos_list
-                existing.reviews = reviews_list
-                existing.price_level = detail.price_level
-                existing.wheelchair_accessible_entrance = detail.wheelchair_accessible_entrance
-                existing.editorial_summary = detail.editorial_summary
-                existing.last_fetched_at = now_utc
-                
-                if content_changed:
-                    existing.knowledge_synced = False
-                
+                existing_content_hash = self._compute_hash_for_record(existing)
+                content_changed = new_content_hash != existing_content_hash
+
+                self._apply_detail_to_record(existing, detail, content_changed, now_utc)
+
                 self.db.flush()
-                logger.debug("PlaceDetail updated after race condition: place_id=%s", detail.place_id)
+                logger.debug(
+                    "PlaceDetail updated after race condition: place_id=%s",
+                    detail.place_id,
+                )
                 return existing
             else:
                 # Different error — re-raise

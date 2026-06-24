@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import and_, desc, func
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from app.models.place_answer_log import PlaceAnswerLog
 from app.models.place_question import PlaceQuestion
 from app.models.place_qa_session import PlaceQASession
@@ -30,13 +30,13 @@ class PlaceQARepository:
         self.db.flush()
         logger.info(
             "Created Place Q&A session id=%r for user_id=%s, place_id=%s",
-            session.id, user_id, place_id,
+            session.id,
+            user_id,
+            place_id,
         )
         return session
 
-    def get_session(
-        self, session_id: str, user_id: int
-    ) -> Optional[PlaceQASession]:
+    def get_session(self, session_id: str, user_id: int) -> Optional[PlaceQASession]:
         """Get a single session by ID (with authorization check)."""
         return (
             self.db.query(PlaceQASession)
@@ -111,9 +111,7 @@ class PlaceQARepository:
         sessions = query.limit(limit).offset(offset).all()
         return sessions, total
 
-    def update_session_timestamp(
-        self, session: PlaceQASession
-    ) -> None:
+    def update_session_timestamp(self, session: PlaceQASession) -> None:
         """Update last_message_at timestamp."""
         last_msg = (
             self.db.query(func.max(PlaceQAMessage.created_at))
@@ -123,17 +121,13 @@ class PlaceQARepository:
         session.last_message_at = last_msg
         self.db.flush()
 
-    def delete_session(
-        self, session: PlaceQASession
-    ) -> None:
+    def delete_session(self, session: PlaceQASession) -> None:
         """Soft delete session (set is_deleted flag)."""
         session.is_deleted = True
         self.db.flush()
         logger.info("Soft deleted Place Q&A session id=%r", session.id)
 
-    def bulk_delete_sessions(
-        self, session_ids: List[str], user_id: int
-    ) -> List[str]:
+    def bulk_delete_sessions(self, session_ids: List[str], user_id: int) -> List[str]:
         """
         Bulk soft delete sessions.
         Returns list of successfully deleted session IDs.
@@ -192,7 +186,9 @@ class PlaceQARepository:
         self.db.flush()
         logger.debug(
             "Created Place Q&A message id=%s in session_id=%r, role=%s",
-            message.id, session_id, role,
+            message.id,
+            session_id,
+            role,
         )
         return message
 
@@ -221,9 +217,7 @@ class PlaceQARepository:
             .scalar()
         ) or 0
 
-    def get_last_message_preview(
-        self, session_id: str
-    ) -> Optional[str]:
+    def get_last_message_preview(self, session_id: str) -> Optional[str]:
         """Get the last message content for preview."""
         last_msg = (
             self.db.query(PlaceQAMessage.content)
@@ -276,7 +270,11 @@ class PlaceQARepository:
         self.db.flush()
         logger.debug(
             "PlaceQuestion flushed: id=%s user=%s place=%s knowledge=%s session=%r",
-            record.id, user_id, place_id, knowledge_available, session_id,
+            record.id,
+            user_id,
+            place_id,
+            knowledge_available,
+            session_id,
         )
         return record
 
@@ -316,7 +314,10 @@ class PlaceQARepository:
         self.db.flush()
         logger.debug(
             "PlaceAnswerLog flushed: question_id=%s source=%s confidence=%s session=%r",
-            question_id, answer_source, confidence_score, session_id,
+            question_id,
+            answer_source,
+            confidence_score,
+            session_id,
         )
         return record
 

@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 _EMBEDDING_DIM = 1536
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pinecone")
 
+
 class PineconeError(HTTPException):
     """Raised when a Pinecone operation fails."""
 
@@ -42,9 +43,7 @@ class PineconeClient:
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(_executor, self._sync_initialise)
-            logger.info(
-                "Pinecone client ready — index: %s", self._index_name
-            )
+            logger.info("Pinecone client ready — index: %s", self._index_name)
         except Exception as exc:
             logger.error("Pinecone initialisation failed: %s", exc)
             raise PineconeError(f"Pinecone initialisation failed: {exc}")
@@ -68,9 +67,7 @@ class PineconeClient:
                     region=settings.PINECONE_ENVIRONMENT or "us-east-1",
                 ),
             )
-            logger.info(
-                "Pinecone index '%s' created successfully", self._index_name
-            )
+            logger.info("Pinecone index '%s' created successfully", self._index_name)
 
         self._index = self._pc.Index(self._index_name)
 
@@ -78,16 +75,19 @@ class PineconeClient:
     # Internal: lazy fallback (handles direct instantiation in tests)
     # ------------------------------------------------------------------
 
-    def _get_index(self):
+    async def _get_index(self):
         if self._index is not None:
             return self._index
 
         logger.warning(
             "PineconeClient._get_index called before initialise() — "
-            "performing synchronous fallback init. "
+            "performing async fallback init. "
             "Ensure initialise() is called in the FastAPI lifespan."
         )
-        self._sync_initialise()
+        # BUG FIX: Run fallback init in thread executor to avoid blocking
+        # the async event loop (Pinecone init involves network I/O).
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_executor, self._sync_initialise)
         return self._index
 
     def _make_namespace(self, place_id: str) -> str:
@@ -98,12 +98,22 @@ class PineconeClient:
     # Internal: sync helpers (run in executor)
     # ------------------------------------------------------------------
 
+    def _sync_get_index(self):
+        """Synchronous index accessor — called from thread pool."""
+        if self._index is not None:
+            return self._index
+        # Fallback init should not happen in production because initialise()
+        # is called during the FastAPI lifespan. This path only runs in tests
+        # or if initialise() was never called.
+        self._sync_initialise()
+        return self._index
+
     def _sync_upsert(
         self,
         vectors: List[Dict[str, Any]],
         namespace: str,
     ) -> int:
-        idx = self._get_index()
+        idx = self._sync_get_index()
         response = idx.upsert(vectors=vectors, namespace=namespace)
         return response.upserted_count
 
@@ -115,7 +125,7 @@ class PineconeClient:
         filter_dict: Optional[Dict[str, Any]],
         include_metadata: bool,
     ) -> List[Dict[str, Any]]:
-        idx = self._get_index()
+        idx = self._sync_get_index()
         kwargs: Dict[str, Any] = {
             "vector": vector,
             "top_k": top_k,
@@ -137,18 +147,17 @@ class PineconeClient:
 
     def _sync_delete_namespace(self, namespace: str) -> None:
         """Delete ALL vectors in a namespace (used before re-sync)."""
-        idx = self._get_index()
+        idx = self._sync_get_index()
         idx.delete(delete_all=True, namespace=namespace)
 
     def _sync_describe_index_stats(self) -> Dict[str, Any]:
-        idx = self._get_index()
+        idx = self._sync_get_index()
         stats = idx.describe_index_stats()
         return {
             "dimension": stats.dimension,
             "total_vector_count": stats.total_vector_count,
             "namespaces": {
-                ns: info.vector_count
-                for ns, info in (stats.namespaces or {}).items()
+                ns: info.vector_count for ns, info in (stats.namespaces or {}).items()
             },
         }
 
@@ -164,7 +173,9 @@ class PineconeClient:
         namespace = self._make_namespace(place_id)
         logger.info(
             "Pinecone upsert — place_id: %s, namespace: %s, vectors: %d",
-            place_id, namespace, len(vectors),
+            place_id,
+            namespace,
+            len(vectors),
         )
         try:
             # B03 FIX: asyncio.get_running_loop() is the correct API inside async
@@ -175,15 +186,14 @@ class PineconeClient:
             )
             logger.info(
                 "Pinecone upsert complete — place_id: %s, upserted: %d",
-                place_id, count,
+                place_id,
+                count,
             )
             return count
         except PineconeError:
             raise
         except Exception as exc:
-            logger.error(
-                "Pinecone upsert failed for place_id %s: %s", place_id, exc
-            )
+            logger.error("Pinecone upsert failed for place_id %s: %s", place_id, exc)
             raise PineconeError(f"Pinecone upsert failed: {exc}")
 
     async def query_vectors(
@@ -197,7 +207,9 @@ class PineconeClient:
         namespace = self._make_namespace(place_id)
         logger.info(
             "Pinecone query — place_id: %s, namespace: %s, top_k: %d",
-            place_id, namespace, top_k,
+            place_id,
+            namespace,
+            top_k,
         )
         try:
             # B03 FIX: asyncio.get_running_loop() instead of get_event_loop()
@@ -210,22 +222,22 @@ class PineconeClient:
             )
             logger.info(
                 "Pinecone query returned %d matches for place_id: %s",
-                len(matches), place_id,
+                len(matches),
+                place_id,
             )
             return matches
         except PineconeError:
             raise
         except Exception as exc:
-            logger.error(
-                "Pinecone query failed for place_id %s: %s", place_id, exc
-            )
+            logger.error("Pinecone query failed for place_id %s: %s", place_id, exc)
             raise PineconeError(f"Pinecone query failed: {exc}")
 
     async def delete_place_namespace(self, place_id: str) -> None:
         namespace = self._make_namespace(place_id)
         logger.info(
             "Pinecone delete namespace — place_id: %s, namespace: %s",
-            place_id, namespace,
+            place_id,
+            namespace,
         )
         try:
             # B03 FIX: asyncio.get_running_loop() instead of get_event_loop()
@@ -238,7 +250,8 @@ class PineconeClient:
             # Non-fatal — log and continue; worst case is stale vectors
             logger.warning(
                 "Pinecone namespace delete failed for place_id %s: %s",
-                place_id, exc,
+                place_id,
+                exc,
             )
 
     async def get_namespace_vector_count(self, place_id: str) -> int:
@@ -253,7 +266,5 @@ class PineconeClient:
             )
             return stats.get("namespaces", {}).get(namespace, 0)
         except Exception as exc:
-            logger.warning(
-                "Pinecone stats failed for place_id %s: %s", place_id, exc
-            )
+            logger.warning("Pinecone stats failed for place_id %s: %s", place_id, exc)
             return 0

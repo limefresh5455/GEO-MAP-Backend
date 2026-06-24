@@ -14,16 +14,15 @@ from app.schemas.place_details import (
     PlaceReview,
 )
 from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 _DETAILS_KEY_PREFIX = "place_details"
 _LOCK_KEY_PREFIX = "place_details_lock"
-# B11: Lock TTL — how long a "fetching in progress" lock is held (seconds)
 _LOCK_TTL_SECONDS = 30
-# B11: How long to wait between lock-check retries (seconds)
 _LOCK_RETRY_INTERVAL = 0.3
-# B11: Max retries before giving up and calling Google directly
 _LOCK_MAX_RETRIES = 10
+
 
 def _details_cache_key(place_id: str) -> str:
     return f"{_DETAILS_KEY_PREFIX}:{place_id}"
@@ -80,12 +79,20 @@ def _orm_to_result(record) -> PlaceDetailResult:
         price_level=record.price_level,
         wheelchair_accessible_entrance=record.wheelchair_accessible_entrance,
         editorial_summary=record.editorial_summary,
+        extended_data=record.extended_data,
         last_fetched_at=record.last_fetched_at,
         knowledge_synced=record.knowledge_synced,
     )
 
 
 class PlaceDetailsService:
+    """Fetch and cache place details from the Google Places API (New).
+
+    Only the Google Place Details API is used for fresh data, with Redis + PG
+    as a caching layer for performance. After fetching, a background task
+    creates Pinecone vectors so the Place Q&A endpoint can answer questions.
+    """
+
     def __init__(
         self,
         db: Session,
@@ -96,17 +103,13 @@ class PlaceDetailsService:
         self.db = db
         self.redis_repo = redis_repo
         self.google_client = google_client
-        self.knowledge_service = knowledge_service
         self.repo = PlaceDetailsRepository(db)
         self._details_ttl = settings.REDIS_DETAILS_CACHE_TTL
-        # B17: Re-fetch from Google if the DB record is older than this
+        self.knowledge_service = knowledge_service
         self._stale_after_days: int = getattr(settings, "DETAILS_STALE_AFTER_DAYS", 7)
-        # Phase 3: Auto-sync knowledge after fetching from Google
-        self._auto_sync_enabled: bool = getattr(
-            settings, "AUTO_SYNC_KNOWLEDGE_ON_DETAILS_FETCH", True
-        )
 
-    # Internal: Redis helpers
+    # ── Redis helpers ────────────────────────────────────────────────────
+
     async def _try_get_from_cache(self, place_id: str) -> Optional[PlaceDetailResult]:
         key = _details_cache_key(place_id)
         raw = await self.redis_repo.get(key)
@@ -118,7 +121,9 @@ class PlaceDetailsService:
             return result
         except Exception as exc:
             logger.warning(
-                "Place Details cache deserialisation error for %s: %s", place_id, exc
+                "Place Details cache deserialisation error for %s: %s",
+                place_id,
+                exc,
             )
             return None
 
@@ -130,12 +135,16 @@ class PlaceDetailsService:
             )
         except Exception as exc:
             logger.warning(
-                "Place Details cache write failed for %s: %s", detail.place_id, exc
+                "Place Details cache write failed for %s: %s",
+                detail.place_id,
+                exc,
             )
+
+    # ── Stampede lock ────────────────────────────────────────────────────
 
     async def _acquire_lock(self, place_id: str) -> bool:
         if self.redis_repo.client is None:
-            return True  # No Redis — skip locking, allow direct Google call
+            return True
         try:
             key = _lock_key(place_id)
             acquired = await self.redis_repo.client.set(
@@ -143,11 +152,14 @@ class PlaceDetailsService:
             )
             return bool(acquired)
         except Exception as exc:
-            logger.warning("Lock acquire failed for %s: %s — proceeding without lock", place_id, exc)
-            return True  # Fail open: allow Google call rather than block
+            logger.warning(
+                "Lock acquire failed for %s: %s — proceeding without lock",
+                place_id,
+                exc,
+            )
+            return True
 
     async def _release_lock(self, place_id: str) -> None:
-        """B11: Release the fetch lock after writing to cache."""
         if self.redis_repo.client is None:
             return
         try:
@@ -155,53 +167,69 @@ class PlaceDetailsService:
         except Exception as exc:
             logger.warning("Lock release failed for %s: %s", place_id, exc)
 
-    async def _trigger_background_knowledge_sync(self, place_id: str) -> None:
-        if not self._auto_sync_enabled:
-            logger.debug(
-                "Auto knowledge sync disabled — place_id: %s", place_id
-            )
-            return
+    # ── Background knowledge sync (Pinecone vectors for Place Q&A) ───────
 
+    async def _trigger_background_knowledge_sync(self, place_id: str) -> None:
+        """
+        Automatically create Pinecone vectors after fetching place details.
+        Runs as a fire-and-forget background task so the API response is not
+        blocked by embedding + Pinecone upload.
+        """
         if self.knowledge_service is None:
             logger.debug(
-                "Auto knowledge sync skipped (no KnowledgeService injected) — "
-                "place_id: %s", place_id
+                "Knowledge sync skipped (no KnowledgeService injected) — "
+                "place_id: %s",
+                place_id,
             )
             return
 
         async def _sync_task():
             try:
                 from app.schemas.knowledge import KnowledgeSyncRequest
-                
-                logger.info(
-                    "Background knowledge sync started — place_id: %s", place_id
-                )
-                result = await self.knowledge_service.sync_place_knowledge(
-                    place_id=place_id,
-                    request=KnowledgeSyncRequest(force_resync=False),
-                )
-                if result.skipped:
+                from app.database.connection import SessionLocal
+                from app.services.knowledge_service import KnowledgeService
+
+                task_db = SessionLocal()
+                try:
                     logger.info(
-                        "Background knowledge sync skipped (already up-to-date) — "
-                        "place_id: %s", place_id
+                        "Background knowledge sync started — place_id: %s",
+                        place_id,
                     )
-                else:
-                    logger.info(
-                        "Background knowledge sync completed — place_id: %s, "
-                        "vectors: %d", place_id, result.vector_count or 0
+                    task_knowledge_service = KnowledgeService(
+                        db=task_db,
+                        openai_client=self.knowledge_service.openai_client,
+                        pinecone_client=self.knowledge_service.pinecone_client,
                     )
+                    result = await task_knowledge_service.sync_place_knowledge(
+                        place_id=place_id,
+                        request=KnowledgeSyncRequest(force_resync=False),
+                    )
+                    if result.skipped:
+                        logger.info(
+                            "Background knowledge sync skipped "
+                            "(already up-to-date) — place_id: %s",
+                            place_id,
+                        )
+                    else:
+                        logger.info(
+                            "Background knowledge sync completed — "
+                            "place_id: %s, vectors: %d",
+                            place_id,
+                            result.vector_count or 0,
+                        )
+                finally:
+                    task_db.close()
             except Exception as exc:
-                # Log but don't raise — this is fire-and-forget
                 logger.warning(
                     "Background knowledge sync failed for place_id %s: %s",
-                    place_id, exc
+                    place_id,
+                    exc,
                 )
 
-        # Create background task (runs independently of the main response)
         asyncio.create_task(_sync_task())
-        logger.debug(
-            "Background knowledge sync task created — place_id: %s", place_id
-        )
+        logger.debug("Background knowledge sync task created — place_id: %s", place_id)
+
+    # ── Google fetch (with stampede lock) ────────────────────────────────
 
     async def _fetch_from_google_with_lock(
         self, place_id: str
@@ -209,36 +237,35 @@ class PlaceDetailsService:
         acquired = await self._acquire_lock(place_id)
 
         if not acquired:
-            # Another request is fetching — wait for it then check cache
+            # Another request is fetching — wait for it, then check cache
             for _ in range(_LOCK_MAX_RETRIES):
                 await asyncio.sleep(_LOCK_RETRY_INTERVAL)
                 cached = await self._try_get_from_cache(place_id)
                 if cached is not None:
                     logger.info(
                         "Place Details stampede avoided — served from cache "
-                        "after lock wait: place_id=%s", place_id
+                        "after lock wait: place_id=%s",
+                        place_id,
                     )
                     return cached, DetailSource.REDIS
-            
-            # B048 FIX: Final cache check after exhausting retries before calling Google.
-            # The lock holder may have just written to cache as we were exiting the retry loop.
+
             cached = await self._try_get_from_cache(place_id)
             if cached is not None:
                 logger.info(
                     "Place Details found in cache after lock wait exhausted — "
-                    "stampede avoided: place_id=%s", place_id
+                    "stampede avoided: place_id=%s",
+                    place_id,
                 )
                 return cached, DetailSource.REDIS
-            
-            # Lock holder timed out or cache write failed — fall through to Google
+
             logger.warning(
                 "Place Details lock wait exhausted for place_id=%s — "
-                "calling Google directly as fallback", place_id
+                "calling Google directly as fallback",
+                place_id,
             )
 
         try:
-            # Re-check cache in case the lock holder just wrote while we
-            # were acquiring (TOCTOU mitigation)
+            # Re-check cache (TOCTOU mitigation)
             cached = await self._try_get_from_cache(place_id)
             if cached is not None:
                 return cached, DetailSource.REDIS
@@ -248,19 +275,20 @@ class PlaceDetailsService:
             self.repo.upsert(detail)
             self.db.commit()
             logger.info("Place Details saved to DB — place_id: %s", place_id)
+
             await self._write_to_cache(detail)
-            
-            # Phase 3: Trigger background knowledge sync after successful fetch
+
+            # Background knowledge sync — creates Pinecone vectors for Place Q&A
             await self._trigger_background_knowledge_sync(place_id)
-            
+
             return detail, DetailSource.GOOGLE
         finally:
             if acquired:
                 await self._release_lock(place_id)
 
-    async def get_place_details(
-        self, place_id: str
-    ) -> Tuple[PlaceDetailResult, str]:
+    # ── Public entry point ───────────────────────────────────────────────
+
+    async def get_place_details(self, place_id: str) -> Tuple[PlaceDetailResult, str]:
         # Tier 1: Redis cache
         cached = await self._try_get_from_cache(place_id)
         if cached is not None:
@@ -271,24 +299,27 @@ class PlaceDetailsService:
         # Tier 2: PostgreSQL
         db_record = self.repo.get_by_place_id(place_id)
         if db_record is not None:
-            # B17: Check staleness — re-fetch from Google if data is too old
-            stale_threshold = datetime.now(timezone.utc) - timedelta(days=self._stale_after_days)
+            stale_threshold = datetime.now(timezone.utc) - timedelta(
+                days=self._stale_after_days
+            )
             last_fetched = db_record.last_fetched_at
-            # Make last_fetched timezone-aware if it isn't (defensive)
             if last_fetched and last_fetched.tzinfo is None:
                 last_fetched = last_fetched.replace(tzinfo=timezone.utc)
 
             if last_fetched and last_fetched < stale_threshold:
                 logger.info(
-                    "Place Details DB record stale (last_fetched=%s, threshold=%s) "
-                    "— refreshing from Google: place_id=%s",
-                    last_fetched, stale_threshold, place_id,
+                    "Place Details DB record stale (last_fetched=%s, "
+                    "threshold=%s) — refreshing from Google: place_id=%s",
+                    last_fetched,
+                    stale_threshold,
+                    place_id,
                 )
-                # Fall through to Google fetch below
+                # Fall through to Google fetch
             else:
                 logger.info(
                     "Place Details DB HIT — place_id: %s (last_fetched: %s)",
-                    place_id, db_record.last_fetched_at,
+                    place_id,
+                    db_record.last_fetched_at,
                 )
                 result = _orm_to_result(db_record)
                 await self._write_to_cache(result)
@@ -296,5 +327,5 @@ class PlaceDetailsService:
 
         logger.info("Place Details DB MISS — place_id: %s → calling Google", place_id)
 
-        # Tier 3: Google (with B11 stampede lock)
+        # Tier 3: Google (with stampede lock)
         return await self._fetch_from_google_with_lock(place_id)

@@ -2,8 +2,8 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = 'f1a2b3c4d5e6'
-down_revision: Union[str, None] = 'cb3b8c851c9d'
+revision: str = "f1a2b3c4d5e6"
+down_revision: Union[str, None] = "cb3b8c851c9d"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -25,16 +25,16 @@ def upgrade() -> None:
     """)
 
     op.create_index(
-        index_name='uix_user_locations_single_current',
-        table_name='user_locations',
-        columns=['user_id'],
+        index_name="uix_user_locations_single_current",
+        table_name="user_locations",
+        columns=["user_id"],
         unique=True,
-        postgresql_where=sa.text('is_current = TRUE'),
+        postgresql_where=sa.text("is_current = TRUE"),
     )
 
 
 def downgrade() -> None:
     op.drop_index(
-        index_name='uix_user_locations_single_current',
-        table_name='user_locations',
+        index_name="uix_user_locations_single_current",
+        table_name="user_locations",
     )

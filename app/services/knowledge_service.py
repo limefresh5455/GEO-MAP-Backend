@@ -1,7 +1,7 @@
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 from sqlalchemy.orm import Session
 from app.exceptions.places import PlaceDetailNotFoundError
 from app.integrations.openai_client import OpenAIEmbeddingClient
@@ -9,11 +9,17 @@ from app.integrations.pinecone_client import PineconeClient
 from app.models.place_detail import PlaceDetail
 from app.repositories.knowledge_repository import KnowledgeRepository
 from app.repositories.place_details_repository import PlaceDetailsRepository
-from app.schemas.knowledge import KnowledgeChunk, KnowledgeSyncRequest, KnowledgeSyncResponse, SyncStatus
+from app.schemas.knowledge import (
+    KnowledgeChunk,
+    KnowledgeSyncRequest,
+    KnowledgeSyncResponse,
+    SyncStatus,
+)
 
 logger = logging.getLogger(__name__)
 _MAX_CHUNK_CHARS = 3000
 _NS_PREFIX = "place"
+
 
 def _safe_str(value: Any, fallback: str = "") -> str:
     """Return str(value) or fallback if value is None/empty."""
@@ -53,9 +59,7 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
     # 3. Opening hours
     hours_parts = []
     if place.open_now is not None:
-        hours_parts.append(
-            f"Currently open: {'Yes' if place.open_now else 'No'}"
-        )
+        hours_parts.append(f"Currently open: {'Yes' if place.open_now else 'No'}")
     # B-053 FIX: Check if opening_hours exists and is a dict before accessing
     if place.opening_hours:
         if isinstance(place.opening_hours, dict):
@@ -63,16 +67,14 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
             if weekdays and isinstance(weekdays, list):
                 hours_parts.append("Opening hours:")
                 hours_parts.extend(f"  {line}" for line in weekdays)
-    
+
     if hours_parts:
         sections["hours"] = "\n".join(hours_parts)
 
     # 4. Contact
     contact_parts = []
     if place.international_phone_number:
-        contact_parts.append(
-            f"International phone: {place.international_phone_number}"
-        )
+        contact_parts.append(f"International phone: {place.international_phone_number}")
     if place.national_phone_number:
         contact_parts.append(f"National phone: {place.national_phone_number}")
     if place.website_uri:
@@ -105,7 +107,89 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
             f"Wheelchair accessible entrance: {'Yes' if accessible else 'No'}"
         )
 
-    # 7. Reviews
+    # 7. Extended amenities from Google + OSM
+    amenities_parts = []
+    extended_data = place.extended_data or {}
+    if isinstance(extended_data, dict):
+        # Dining/service flags
+        dining_flags = {
+            "dineIn": "Dine-in available",
+            "takeout": "Takeout available",
+            "delivery": "Delivery available",
+            "curbsidePickup": "Curbside pickup available",
+            "reservable": "Reservations accepted",
+        }
+        for key, label in dining_flags.items():
+            if extended_data.get(key) is True:
+                amenities_parts.append(label)
+            elif extended_data.get(key) is False:
+                amenities_parts.append(f"No {label.lower()}")
+
+        # Food & drink
+        food_flags = {
+            "servesBreakfast": "Serves breakfast",
+            "servesLunch": "Serves lunch",
+            "servesDinner": "Serves dinner",
+            "servesBeer": "Serves beer",
+            "servesWine": "Serves wine",
+            "servesCocktails": "Serves cocktails",
+        }
+        for key, label in food_flags.items():
+            if extended_data.get(key) is True:
+                amenities_parts.append(label)
+
+        # Atmosphere
+        atmos_flags = {
+            "outdoorSeating": "Has outdoor seating",
+            "liveMusic": "Has live music",
+            "goodForChildren": "Good for children",
+            "goodForGroups": "Good for groups",
+            "allowsDogs": "Allows dogs",
+            "restroom": "Has restroom",
+        }
+        for key, label in atmos_flags.items():
+            if extended_data.get(key) is True:
+                amenities_parts.append(label)
+
+        # Parking
+        for k, v in extended_data.items():
+            if k.startswith("parking_") and v is True:
+                label = k.replace("parking_", "").replace("_", " ").title()
+                amenities_parts.append(f"Parking available: {label}")
+            elif k.startswith("parking_") and v is False:
+                label = k.replace("parking_", "").replace("_", " ").title()
+                amenities_parts.append(f"No parking: {label}")
+
+        # Payment
+        for k, v in extended_data.items():
+            if k.startswith("payment_") and v is True:
+                label = k.replace("payment_", "").replace("_", " ").title()
+                amenities_parts.append(f"Payment accepted: {label}")
+
+        # EV charging
+        if extended_data.get("ev_charger_options"):
+            ev = extended_data["ev_charger_options"]
+            if isinstance(ev, dict):
+                count = ev.get("chargerCount", "some")
+                amenities_parts.append(f"EV charging available ({count} chargers)")
+
+        # Wikipedia extract
+        wiki_extract = extended_data.get("wikipedia_extract")
+        if wiki_extract:
+            amenities_parts.append(f"\nFrom Wikipedia:\n{wiki_extract[:1000]}")
+
+        # Neighborhood / locality
+        for key in ("neighborhood", "sublocality", "locality", "state", "country"):
+            val = extended_data.get(key)
+            if val:
+                amenities_parts.append(
+                    f"Location context: {key.replace('_', ' ').title()}: {val}"
+                )
+
+    if amenities_parts:
+        sections["amenities"] = "\n".join(amenities_parts)
+
+    # 8. Reviews
     review_parts = []
     reviews = place.reviews or []
     if isinstance(reviews, list):
@@ -117,10 +201,8 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
             rating = review.get("rating")
             if text.strip():
                 stars = f" ({rating}/5)" if rating is not None else ""
-                snippet = text.strip()[:500]   # cap individual review length
-                review_parts.append(
-                    f"Review {i} by {author}{stars}:\n  {snippet}"
-                )
+                snippet = text.strip()[:500]  # cap individual review length
+                review_parts.append(f"Review {i} by {author}{stars}:\n  {snippet}")
     if review_parts:
         sections["reviews"] = "\n\n".join(review_parts)
 
@@ -130,9 +212,7 @@ def build_place_document(place: PlaceDetail) -> Dict[str, str]:
 # Helpers
 def _compute_source_version(sections: Dict[str, str]) -> str:
     """SHA-256 of the full concatenated document — used for change detection."""
-    full_text = "\n\n".join(
-        f"[{k}]\n{v}" for k, v in sorted(sections.items())
-    )
+    full_text = "\n\n".join(f"[{k}]\n{v}" for k, v in sorted(sections.items()))
     return hashlib.sha256(full_text.encode("utf-8")).hexdigest()
 
 
@@ -163,7 +243,8 @@ class KnowledgeService:
     ) -> KnowledgeSyncResponse:
         logger.info(
             "Knowledge sync start — place_id: %s, force: %s",
-            place_id, request.force_resync,
+            place_id,
+            request.force_resync,
         )
 
         # Step 1 — Load place from DB
@@ -227,21 +308,21 @@ class KnowledgeService:
 
         # Step 6 & 7 — Build and truncate chunk texts
         section_names = list(sections.keys())
-        chunk_texts = [
-            _truncate(sections[name]) for name in section_names
-        ]
+        chunk_texts = [_truncate(sections[name]) for name in section_names]
 
         # Step 8 — Embed all chunks in one batched call
         logger.info(
             "Knowledge sync — embedding %d chunks for place_id: %s",
-            len(chunk_texts), place_id,
+            len(chunk_texts),
+            place_id,
         )
         try:
             vectors_raw = await self.openai_client.embed_texts(chunk_texts)
         except Exception as exc:
             logger.error(
                 "Knowledge sync embed failed for place_id %s: %s",
-                place_id, exc,
+                place_id,
+                exc,
             )
             self.repo.mark_failed(place_id, str(exc))
             self.db.commit()
@@ -259,15 +340,17 @@ class KnowledgeService:
             metadata: Dict[str, Any] = {
                 "place_id": place_id,
                 "section": section_name,
-                "text": text,                      # stored for retrieval in Phase 4
+                "text": text,  # stored for retrieval in Phase 4
                 "display_name": place.display_name or "",
                 "formatted_address": place.formatted_address or "",
             }
-            pinecone_vectors.append({
-                "id": vector_id,
-                "values": embedding,
-                "metadata": metadata,
-            })
+            pinecone_vectors.append(
+                {
+                    "id": vector_id,
+                    "values": embedding,
+                    "metadata": metadata,
+                }
+            )
             knowledge_chunks.append(
                 KnowledgeChunk(
                     chunk_id=vector_id,
@@ -280,7 +363,8 @@ class KnowledgeService:
         # Step 10 — Upsert to Pinecone
         logger.info(
             "Knowledge sync — upserting %d vectors to Pinecone namespace: %s",
-            len(pinecone_vectors), namespace,
+            len(pinecone_vectors),
+            namespace,
         )
         try:
             upserted_count = await self.pinecone_client.upsert_vectors(
@@ -290,7 +374,8 @@ class KnowledgeService:
         except Exception as exc:
             logger.error(
                 "Knowledge sync Pinecone upsert failed for place_id %s: %s",
-                place_id, exc,
+                place_id,
+                exc,
             )
             self.repo.mark_failed(place_id, str(exc))
             self.db.commit()
@@ -315,7 +400,9 @@ class KnowledgeService:
         now = datetime.now(timezone.utc)
         logger.info(
             "Knowledge sync COMPLETE — place_id: %s, vectors: %d, namespace: %s",
-            place_id, upserted_count, namespace,
+            place_id,
+            upserted_count,
+            namespace,
         )
 
         return KnowledgeSyncResponse(

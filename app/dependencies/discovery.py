@@ -1,15 +1,12 @@
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
-from app.core.redis import get_redis_client
 from app.database.connection import get_db
+from app.dependencies import get_redis_repo
 from app.integrations.google_autocomplete import GoogleAutocompleteClient
 from app.integrations.google_places import GooglePlacesClient
 from app.integrations.google_text_search import GoogleTextSearchClient
 from app.repositories.redis_repository import RedisRepository
 from app.services.discovery_service import DiscoveryService
-
-def get_redis_repo() -> RedisRepository:
-    return RedisRepository(get_redis_client())
 
 
 def get_discovery_service(

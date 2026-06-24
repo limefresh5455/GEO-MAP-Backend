@@ -1,16 +1,14 @@
 import logging
 from typing import List
 from fastapi import APIRouter, Depends, Path, Query, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from sqlalchemy.orm import Session
-from app.database.connection import get_db
+from app.core.rate_limiter import shared_limiter as limiter
 from app.dependencies.auth import get_current_user
 from app.dependencies.place_qa import get_place_qa_service
 from app.exceptions.custom_exceptions import NotFoundError
 from app.models.user import User
 from app.schemas.place_qa import (
     DeletePlaceQASessionResponse,
+    DeletePlaceQASessionsRequest,
     GetPlaceQASessionResponse,
     ListPlaceQASessionsResponse,
     PlaceInfo,
@@ -22,9 +20,9 @@ from app.schemas.place_qa import (
     UpdateSessionResponse,
 )
 from app.services.place_qa_service import PlaceQAService
+
 logger = logging.getLogger(__name__)
 
-limiter = Limiter(key_func=get_remote_address)
 router = APIRouter(prefix="/places", tags=["Place Q&A"])
 
 
@@ -58,7 +56,9 @@ async def ask_place_question(
     """
     logger.info(
         "Ask question — user: %s, place: %s, session: %s",
-        current_user.id, place_id, payload.session_id,
+        current_user.id,
+        place_id,
+        payload.session_id,
     )
 
     # BUG 4 FIX: No longer passing `db` as a parameter — service uses self.db
@@ -77,13 +77,17 @@ async def list_place_qa_sessions(
     page_size: int = Query(10, ge=1, le=50, description="Items per page (max 50)"),
     place_id: str = Query(None, description="Filter by place ID"),
     search: str = Query(None, description="Search in session titles"),
-    sort: str = Query("last_message", description="Sort: last_message | created_at | title"),
+    sort: str = Query(
+        "last_message", description="Sort: last_message | created_at | title"
+    ),
     current_user: User = Depends(get_current_user),
     service: PlaceQAService = Depends(get_place_qa_service),
 ) -> ListPlaceQASessionsResponse:
     logger.info(
         "List sessions — user: %s, filters: place=%s, search=%s",
-        current_user.id, place_id, search,
+        current_user.id,
+        place_id,
+        search,
     )
 
     # BUG 3 FIX: Enrichment (place info, message counts, previews) now
@@ -177,14 +181,16 @@ async def get_place_qa_session(
 @limiter.limit("20/minute")
 async def delete_place_qa_sessions(
     request: Request,
-    session_ids: List[str] = Query(..., description="Session UUIDs to delete"),
+    payload: DeletePlaceQASessionsRequest,
     current_user: User = Depends(get_current_user),
     service: PlaceQAService = Depends(get_place_qa_service),
 ) -> DeletePlaceQASessionResponse:
-    logger.info("Bulk delete — sessions: %s, user: %s", session_ids, current_user.id)
+    logger.info(
+        "Bulk delete — sessions: %s, user: %s", payload.session_ids, current_user.id
+    )
 
     deleted_ids = await service.bulk_delete_sessions(
-        session_ids=session_ids,
+        session_ids=payload.session_ids,
         user_id=current_user.id,
     )
 
@@ -210,6 +216,7 @@ async def update_place_qa_session(
         session_id=session_id,
         user_id=current_user.id,
         title=payload.title,
+        archived=payload.archived,
     )
 
     return UpdateSessionResponse(

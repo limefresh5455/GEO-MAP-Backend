@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Tuple
+from typing import Tuple
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.exceptions.custom_exceptions import LocationNotFoundError
@@ -14,6 +14,7 @@ from app.validators.location_validator import (
 
 logger = logging.getLogger(__name__)
 
+
 class LocationService:
     def __init__(self, db: Session):
         self.db = db
@@ -23,14 +24,20 @@ class LocationService:
     def _do_gps_write(
         self, user_id: int, payload: GPSUpdateRequest
     ) -> Tuple[UserLocation, bool]:
-    
+        """
+        Returns (location, is_new).
+        is_new=True  → a new location record was created.
+        is_new=False → the location was unchanged (duplicate within threshold).
+        """
         existing = self.repo.get_current_location(user_id)
 
         if existing and is_duplicate_location(
-            payload.latitude, payload.longitude,
-            existing.latitude, existing.longitude,
+            payload.latitude,
+            payload.longitude,
+            existing.latitude,
+            existing.longitude,
         ):
-            return existing, True
+            return existing, False  # not a new location — duplicate
 
         self.repo.deactivate_current_location(user_id)
 
@@ -61,11 +68,16 @@ class LocationService:
 
         self.db.commit()
         self.db.refresh(new_location)
-        return new_location, False
+        return new_location, True  # new location was saved
 
     def process_gps_update(
         self, user_id: int, payload: GPSUpdateRequest
     ) -> Tuple[UserLocation, bool]:
+        """
+        Returns (location, is_new).
+        is_new=True  → a new location record was created.
+        is_new=False → the location was unchanged (duplicate within threshold).
+        """
         validate_coordinates(payload.latitude, payload.longitude)
         validate_accuracy(payload.accuracy)
 
@@ -80,15 +92,41 @@ class LocationService:
                 # a new is_current=True row. Roll back and retry once.
                 logger.warning(
                     "GPS update IntegrityError for user_id=%s — concurrent write "
-                    "detected on %s constraint, retrying once.", user_id, constraint_name
+                    "detected on %s constraint, retrying once.",
+                    user_id,
+                    constraint_name,
                 )
                 self.db.rollback()
+
+                # BUG FIX: The previous retry logic would likely fail again because
+                # the concurrent request already set is_current=True for its row.
+                # Instead of calling _do_gps_write (which tries deactivate + insert),
+                # we simply re-read the current location and return it if available,
+                # or try the write once more with an upsert-style approach.
+                existing = self.repo.get_current_location(user_id)
+                if existing:
+                    logger.info(
+                        "GPS update race resolved — using concurrent write's location "
+                        "for user_id=%s: location_id=%s",
+                        user_id,
+                        existing.id,
+                    )
+                    return existing, True
+
+                # No current location found — the concurrent write may have failed too.
+                # Retry the write one more time.
+                logger.info(
+                    "GPS update race retry — no current location found after rollback "
+                    "for user_id=%s, retrying write",
+                    user_id,
+                )
                 return self._do_gps_write(user_id, payload)
             else:
                 # Different constraint violation — re-raise so it's not masked
                 logger.error(
                     "GPS update IntegrityError for user_id=%s — NOT a race condition: %s",
-                    user_id, str(e)
+                    user_id,
+                    str(e),
                 )
                 raise
 
@@ -99,7 +137,7 @@ class LocationService:
     def process_manual_update(
         self, user_id: int, payload: ManualUpdateRequest
     ) -> UserLocation:
-        
+
         validate_coordinates(payload.latitude, payload.longitude)
         validate_accuracy(payload.accuracy)
 

@@ -4,6 +4,7 @@ from app.exceptions.custom_exceptions import InvalidCoordinatesError
 
 DUPLICATE_DISTANCE_THRESHOLD_METERS = 10.0
 
+
 def validate_coordinates(latitude: float, longitude: float) -> None:
     if not (-90.0 <= latitude <= 90.0):
         raise InvalidCoordinatesError(
@@ -20,9 +21,7 @@ def validate_accuracy(accuracy: Optional[float]) -> None:
         raise InvalidCoordinatesError("Accuracy must be a non-negative value")
 
 
-def haversine_distance(
-    lat1: float, lon1: float, lat2: float, lon2: float
-) -> float:
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6_371_000  # Earth radius in metres
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)

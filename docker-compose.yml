@@ -4,7 +4,7 @@ services:
     container_name: geo_db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: geomap_db
+      POSTGRES_DB: geomap_db_updated
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
     ports:
@@ -14,17 +14,17 @@ services:
     networks:
       - geo_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d geomap_db"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d geomap_db_updated"]
       interval: 5s
       timeout: 3s
       retries: 10
+
   redis:
     image: redis:7-alpine
     container_name: geo_redis
     restart: unless-stopped
     ports:
-      - "6379:6379"            
-
+      - "6379:6379"
     command: redis-server --maxmemory 512mb --maxmemory-policy volatile-lru
     volumes:
       - redis_data:/data
@@ -74,6 +74,25 @@ services:
           && echo 'Redis connection registered successfully!' \
           || echo 'Registration failed - add manually at http://localhost:5540'
 
+  # ── Mailpit — local email catcher ──────────────────────────────────────────
+  # Catches all outgoing emails during development.
+  # Web UI login: http://localhost:8025  →  user: admin  password: admin123
+  # SMTP inside Docker network: host=mailpit  port=1025
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: geo_mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"   # Web UI
+      - "1025:1025"   # SMTP
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_UI_AUTH: "admin:admin123"          # Web UI login: admin / admin123
+      MP_SMTP_AUTH_ACCEPT_ANY: 1            # accept any SMTP credentials
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    networks:
+      - geo_network
+
   api:
     build: .
     container_name: geo_api
@@ -89,6 +108,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
 
 volumes:
   postgres_data:

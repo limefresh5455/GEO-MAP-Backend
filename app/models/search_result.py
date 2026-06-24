@@ -1,6 +1,11 @@
 from sqlalchemy import (
-    Column, DateTime, Float, ForeignKey,
-    Integer, String, Text,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
 )
 from sqlalchemy.sql import func
 from app.database.base import Base

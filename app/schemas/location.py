@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
@@ -22,12 +22,16 @@ class ManualUpdateRequest(BaseModel):
     longitude: float = Field(..., ge=-180.0, le=180.0)
     accuracy: Optional[float] = Field(None, ge=0)
     altitude: Optional[float] = None
+    label: Optional[str] = Field(
+        None, max_length=100, description="User-friendly label e.g. 'Home', 'Office'"
+    )
     metadata_notes: Optional[str] = Field(None, max_length=500)
 
 
 # ---------------------------------------------------------------------------
 # Responses
 # ---------------------------------------------------------------------------
+
 
 class LocationData(BaseModel):
     id: int
@@ -39,6 +43,7 @@ class LocationData(BaseModel):
     speed: Optional[float]
     source: str
     is_current: bool
+    label: Optional[str] = None
     client_timestamp: Optional[datetime]
     created_at: datetime
     updated_at: Optional[datetime]
@@ -76,4 +81,4 @@ class APIResponse(BaseModel):
     message: str
     data: Optional[Any] = None
     errors: Optional[Any] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

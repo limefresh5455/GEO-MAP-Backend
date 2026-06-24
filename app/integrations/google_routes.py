@@ -18,27 +18,31 @@ from app.schemas.routes import (
 )
 
 logger = logging.getLogger(__name__)
-COMPUTE_ROUTE_FIELD_MASK = ",".join([
-    "routes.distanceMeters",
-    "routes.duration",
-    "routes.staticDuration",
-    "routes.polyline.encodedPolyline",
-    "routes.legs.distanceMeters",
-    "routes.legs.duration",
-    "routes.legs.steps.distanceMeters",
-    "routes.legs.steps.staticDuration",
-    "routes.legs.steps.navigationInstruction",
-    "routes.optimizedIntermediateWaypointIndex",
-])
+COMPUTE_ROUTE_FIELD_MASK = ",".join(
+    [
+        "routes.distanceMeters",
+        "routes.duration",
+        "routes.staticDuration",
+        "routes.polyline.encodedPolyline",
+        "routes.legs.distanceMeters",
+        "routes.legs.duration",
+        "routes.legs.steps.distanceMeters",
+        "routes.legs.steps.staticDuration",
+        "routes.legs.steps.navigationInstruction",
+        "routes.optimizedIntermediateWaypointIndex",
+    ]
+)
 
-ROUTE_MATRIX_FIELD_MASK = ",".join([
-    "originIndex",
-    "destinationIndex",
-    "distanceMeters",
-    "duration",
-    "status",
-    "condition",
-])
+ROUTE_MATRIX_FIELD_MASK = ",".join(
+    [
+        "originIndex",
+        "destinationIndex",
+        "distanceMeters",
+        "duration",
+        "status",
+        "condition",
+    ]
+)
 
 
 class GoogleRoutesClient:
@@ -135,10 +139,10 @@ class GoogleRoutesClient:
         avoid_highways: bool = False,
         avoid_ferries: bool = False,
     ) -> RouteResult:
-        # WALK mode does not support traffic-aware routing — Google returns an
-        # error if you combine WALK with TRAFFIC_AWARE. Override automatically.
+        # WALK and TRANSIT modes do not support traffic-aware routing — Google
+        # returns an error if you combine them with TRAFFIC_AWARE. Override automatically.
         effective_routing_preference = routing_preference
-        if travel_mode == TravelMode.WALK:
+        if travel_mode in (TravelMode.WALK, TravelMode.TRANSIT):
             effective_routing_preference = RoutingPreference.TRAFFIC_UNAWARE
 
         payload: Dict[str, Any] = {
@@ -170,7 +174,7 @@ class GoogleRoutesClient:
                     place_id=wp.get("place_id"),
                 )
                 intermediates.append({"waypoint": waypoint_obj})
-            
+
             payload["intermediates"] = intermediates
             payload["optimizeWaypointOrder"] = optimize_waypoint_order
 
@@ -240,9 +244,7 @@ class GoogleRoutesClient:
             len(destinations),
         )
 
-        data = await self._post(
-            "computeRouteMatrix", payload, ROUTE_MATRIX_FIELD_MASK
-        )
+        data = await self._post("computeRouteMatrix", payload, ROUTE_MATRIX_FIELD_MASK)
         return self._parse_matrix_response(data)
 
     # ------------------------------------------------------------------
@@ -265,14 +267,16 @@ class GoogleRoutesClient:
         if legs:
             for step in legs[0].get("steps", []):
                 nav = step.get("navigationInstruction", {})
-                steps.append({
-                    "distance_meters": step.get("distanceMeters", 0),
-                    "duration_seconds": _duration_to_seconds(
-                        step.get("staticDuration", "0s")
-                    ),
-                    "maneuver": nav.get("maneuver", ""),
-                    "instruction": nav.get("instructions", ""),
-                })
+                steps.append(
+                    {
+                        "distance_meters": step.get("distanceMeters", 0),
+                        "duration_seconds": _duration_to_seconds(
+                            step.get("staticDuration", "0s")
+                        ),
+                        "maneuver": nav.get("maneuver", ""),
+                        "instruction": nav.get("instructions", ""),
+                    }
+                )
 
         # Extract base metrics
         distance_meters = route.get("distanceMeters", 0)
@@ -309,13 +313,15 @@ class GoogleRoutesClient:
             optimized_waypoint_order=optimized_order,
         )
 
-    def _parse_matrix_response(
-        self, data: Any
-    ) -> List[RouteMatrixElement]:
-       
+    def _parse_matrix_response(self, data: Any) -> List[RouteMatrixElement]:
+
         if not isinstance(data, list):
             # Some error responses come back as an object with an "error" key
-            error_msg = data.get("error", {}).get("message", str(data)) if isinstance(data, dict) else str(data)
+            error_msg = (
+                data.get("error", {}).get("message", str(data))
+                if isinstance(data, dict)
+                else str(data)
+            )
             raise GooglePlacesAPIError(
                 f"Route Matrix API returned unexpected response: {error_msg}"
             )
@@ -327,16 +333,19 @@ class GoogleRoutesClient:
             status_code = item.get("status", {}).get("code", 0)
             is_ok = condition == "ROUTE_EXISTS" and status_code == 0
 
-            elements.append(RouteMatrixElement(
-                origin_index=item.get("originIndex", 0),
-                destination_index=item.get("destinationIndex", 0),
-                distance_meters=item.get("distanceMeters") if is_ok else None,
-                duration_seconds=(
-                    _duration_to_seconds(item.get("duration", "0s"))
-                    if is_ok else None
-                ),
-                condition=condition,
-            ))
+            elements.append(
+                RouteMatrixElement(
+                    origin_index=item.get("originIndex", 0),
+                    destination_index=item.get("destinationIndex", 0),
+                    distance_meters=item.get("distanceMeters") if is_ok else None,
+                    duration_seconds=(
+                        _duration_to_seconds(item.get("duration", "0s"))
+                        if is_ok
+                        else None
+                    ),
+                    condition=condition,
+                )
+            )
 
         return sorted(elements, key=lambda e: e.destination_index)
 
@@ -345,8 +354,9 @@ class GoogleRoutesClient:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _duration_to_seconds(duration_str: str) -> int:
-   
+
     if not duration_str:
         return 0
     try:
@@ -365,16 +375,17 @@ def _format_distance(meters: int) -> str:
 
 def _format_duration(seconds: int) -> str:
     if seconds < 60:
-        return "1 min"
-    
+        return "<1 min"
+
     minutes = seconds // 60
     if minutes < 60:
         return f"{minutes} min"
-    
+
     hours = minutes // 60
     remaining_minutes = minutes % 60
-    
+
     if remaining_minutes == 0:
-        return f"{hours} hr" if hours == 1 else f"{hours} hr"
-    
-    return f"{hours} hr {remaining_minutes} min"
+        return "1 hour" if hours == 1 else f"{hours} hours"
+
+    hour_label = "hour" if hours == 1 else "hours"
+    return f"{hours} {hour_label} {remaining_minutes} min"

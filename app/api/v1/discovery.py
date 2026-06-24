@@ -5,10 +5,8 @@ from app.dependencies.auth import get_current_user
 from app.dependencies.discovery import get_discovery_service
 from app.models.user import User
 from app.schemas.discovery import (
-    AutocompleteRequest,
     AutocompleteResponse,
     AutocompletePrediction,
-    DiscoveryPlaceResult,
     NearbyDiscoveryRequest,
     NearbyDiscoveryResponse,
     TextSearchRequest,
@@ -19,6 +17,7 @@ from app.services.discovery_service import DiscoveryService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/discovery", tags=["Discovery"])
+
 
 @router.post("/search", response_model=TextSearchResponse)
 async def text_search(
@@ -34,7 +33,7 @@ async def text_search(
       "max_result_count": 20
     }
     ```
-    
+
     Results cached for 60 minutes.
     """
     logger.info(
@@ -67,6 +66,7 @@ async def text_search(
 # 2. Nearby Search — Explore around user's saved location
 # ---------------------------------------------------------------------------
 
+
 @router.post("/nearby", response_model=NearbyDiscoveryResponse)
 async def nearby_search(
     payload: NearbyDiscoveryRequest,
@@ -81,7 +81,7 @@ async def nearby_search(
       "preset": "preferred_types"
     }
     ```
-    
+
     **Request body - Custom types:**
     ```json
     {
@@ -89,16 +89,16 @@ async def nearby_search(
       "included_types": ["restaurant", "cafe"]
     }
     ```
-    
+
     **Available presets:**
     - `preferred_types`: Everyday places (restaurants, cafes, hospitals, shopping, temples)
     - `famous_places`: Tourist attractions, landmarks, museums, parks
-    
+
     **Default:** If no preset or types specified, uses `preferred_types`
-    
+
     User must save location first. Results cached for 60 minutes.
     """
-    
+
     logger.info(
         "Nearby Discovery — user_id: %s, radius: %sm, max: %s, preset: %s",
         current_user.id,
@@ -128,6 +128,7 @@ async def nearby_search(
 # ---------------------------------------------------------------------------
 # 3. Autocomplete (Phase 2 — Search UX)
 # ---------------------------------------------------------------------------
+
 
 @router.get("/autocomplete", response_model=AutocompleteResponse)
 async def autocomplete(

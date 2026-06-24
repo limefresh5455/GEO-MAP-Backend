@@ -41,7 +41,7 @@ class AIChatRepository:
             .filter(
                 and_(
                     AIChatSession.user_id == user_id,
-                    AIChatSession.is_archived == False,  # noqa: E712
+                    AIChatSession.is_archived.is_(False),
                 )
             )
             .scalar()
@@ -69,7 +69,7 @@ class AIChatRepository:
     def add_message(
         self,
         *,
-        session_id: str,          # UUID string (was int)
+        session_id: str,  # UUID string (was int)
         role: str,
         content: str,
         token_count: Optional[int] = None,
@@ -87,7 +87,9 @@ class AIChatRepository:
         self.db.flush()
         return msg
 
-    def get_recent_messages(self, *, session_id: str, limit: int = 10) -> List[AIChatMessage]:
+    def get_recent_messages(
+        self, *, session_id: str, limit: int = 10
+    ) -> List[AIChatMessage]:
         """Return the N most recent messages in chronological order."""
         messages = (
             self.db.query(AIChatMessage)

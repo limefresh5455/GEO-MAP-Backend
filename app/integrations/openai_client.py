@@ -1,5 +1,6 @@
+import asyncio
 import logging
-from typing import List, Optional
+from typing import AsyncGenerator, List
 from fastapi import HTTPException, status
 from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
 from app.core.config import settings
@@ -8,6 +9,9 @@ logger = logging.getLogger(__name__)
 
 # Maximum texts per single embeddings.create() call
 _BATCH_LIMIT = 100
+# Retry settings for transient failures
+_MAX_RETRIES = 3
+_BASE_RETRY_DELAY = 0.5
 
 
 class EmbeddingError(HTTPException):
@@ -48,30 +52,25 @@ class OpenAIEmbeddingClient:
 
     def __init__(self) -> None:
         self.model = settings.OPENAI_EMBEDDING_MODEL
-        # AsyncOpenAI automatically uses OPENAI_API_KEY env var if api_key
-        # is not passed; we pass it explicitly for clarity.
         self._client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
     # ------------------------------------------------------------------
-    # Public interface
+    # Embeddings
     # ------------------------------------------------------------------
 
     async def embed_texts(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
 
-        # B-036 FIX: Filter out empty strings before sending to OpenAI
-        # OpenAI API rejects empty strings with 400 Bad Request
         filtered_texts = [t for t in texts if t and t.strip()]
-        
+
         if not filtered_texts:
-            # All texts were empty - return empty vectors for each
             return [[0.0] * 1536 for _ in texts]
 
         all_embeddings: List[List[float]] = []
 
         for batch_start in range(0, len(filtered_texts), _BATCH_LIMIT):
-            batch = filtered_texts[batch_start: batch_start + _BATCH_LIMIT]
+            batch = filtered_texts[batch_start : batch_start + _BATCH_LIMIT]
             logger.info(
                 "OpenAI embed — model: %s, batch: %d texts (offset %d)",
                 self.model,
@@ -83,7 +82,6 @@ class OpenAIEmbeddingClient:
                     input=batch,
                     model=self.model,
                 )
-                # Response data is sorted by index, matching input order
                 batch_vectors = [item.embedding for item in response.data]
                 all_embeddings.extend(batch_vectors)
                 logger.info(
@@ -96,14 +94,49 @@ class OpenAIEmbeddingClient:
                 logger.warning("OpenAI rate limit hit during embedding")
                 raise EmbeddingRateLimitError()
 
-            except APITimeoutError:
-                logger.error("OpenAI embedding request timed out")
-                raise EmbeddingError("OpenAI embedding request timed out")
-
-            except APIError as exc:
-                logger.error("OpenAI API error during embedding: %s", exc)
-                raise EmbeddingError(f"OpenAI API error: {exc.message}")
-
+            except (APITimeoutError, APIError):
+                for attempt in range(_MAX_RETRIES + 1):
+                    try:
+                        response = await self._client.embeddings.create(
+                            input=batch,
+                            model=self.model,
+                        )
+                        batch_vectors = [item.embedding for item in response.data]
+                        all_embeddings.extend(batch_vectors)
+                        logger.info(
+                            "OpenAI embed — received %d vectors (dim=%d)%s",
+                            len(batch_vectors),
+                            len(batch_vectors[0]) if batch_vectors else 0,
+                            " after retry" if attempt > 0 else "",
+                        )
+                        break
+                    except (APITimeoutError, APIError) as retry_exc:
+                        if attempt == _MAX_RETRIES:
+                            if isinstance(retry_exc, APITimeoutError):
+                                logger.error(
+                                    "OpenAI embedding request timed out after retries"
+                                )
+                                raise EmbeddingError(
+                                    "OpenAI embedding request timed out"
+                                )
+                            logger.error(
+                                "OpenAI API error during embedding after retries: %s",
+                                retry_exc,
+                            )
+                            raise EmbeddingError(
+                                f"OpenAI API error: {retry_exc.message}"
+                            )
+                        delay = _BASE_RETRY_DELAY * (2**attempt)
+                        logger.warning(
+                            "OpenAI embed attempt %d/%d failed, retrying in %.1fs",
+                            attempt + 1,
+                            _MAX_RETRIES + 1,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                    except RateLimitError:
+                        logger.warning("OpenAI rate limit hit during embedding retry")
+                        raise EmbeddingRateLimitError()
             except Exception as exc:
                 logger.error("Unexpected error during embedding: %s", exc)
                 raise EmbeddingError(str(exc))
@@ -111,12 +144,12 @@ class OpenAIEmbeddingClient:
         return all_embeddings
 
     async def embed_single(self, text: str) -> List[float]:
-        """
-        Convenience wrapper — embed a single string.
-        Used during Q&A query embedding in Phase 4.
-        """
         results = await self.embed_texts([text])
         return results[0]
+
+    # ------------------------------------------------------------------
+    # Non-streaming chat completions (kept for HTTP endpoints)
+    # ------------------------------------------------------------------
 
     async def chat_completion(
         self,
@@ -129,37 +162,54 @@ class OpenAIEmbeddingClient:
         logger.info(
             "OpenAI chat completion — model: %s, max_tokens: %d", model, max_tokens
         )
-        try:
-            response = await self._client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_message},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            answer = response.choices[0].message.content or ""
-            logger.info(
-                "OpenAI chat completion — received %d chars", len(answer)
-            )
-            return answer.strip()
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                answer = response.choices[0].message.content or ""
+                logger.info(
+                    "OpenAI chat completion — received %d chars%s",
+                    len(answer),
+                    " after retry" if attempt > 0 else "",
+                )
+                return answer.strip()
 
-        except RateLimitError:
-            logger.warning("OpenAI rate limit hit during chat completion")
-            raise EmbeddingRateLimitError()
+            except RateLimitError:
+                logger.warning("OpenAI rate limit hit during chat completion")
+                raise EmbeddingRateLimitError()
 
-        except APITimeoutError:
-            logger.error("OpenAI chat completion request timed out")
-            raise ChatCompletionError("OpenAI chat completion request timed out")
+            except (APITimeoutError, APIError) as exc:
+                if attempt == _MAX_RETRIES:
+                    if isinstance(exc, APITimeoutError):
+                        logger.error("OpenAI chat completion timed out after retries")
+                        raise ChatCompletionError(
+                            "OpenAI chat completion request timed out"
+                        )
+                    logger.error(
+                        "OpenAI API error during chat completion after retries: %s",
+                        exc,
+                    )
+                    raise ChatCompletionError(f"OpenAI API error: {exc.message}")
+                delay = _BASE_RETRY_DELAY * (2**attempt)
+                logger.warning(
+                    "OpenAI chat completion attempt %d/%d failed, retrying in %.1fs: %s",
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
 
-        except APIError as exc:
-            logger.error("OpenAI API error during chat completion: %s", exc)
-            raise ChatCompletionError(f"OpenAI API error: {exc.message}")
-
-        except Exception as exc:
-            logger.error("Unexpected error during chat completion: %s", exc)
-            raise ChatCompletionError(str(exc))
+            except Exception as exc:
+                logger.error("Unexpected error during chat completion: %s", exc)
+                raise ChatCompletionError(str(exc))
 
     async def get_chat_completion(
         self,
@@ -170,33 +220,187 @@ class OpenAIEmbeddingClient:
         model = settings.OPENAI_CHAT_MODEL
         logger.info(
             "OpenAI chat with history — model: %s, messages: %d, max_tokens: %d",
-            model, len(messages), max_tokens
+            model,
+            len(messages),
+            max_tokens,
         )
-        try:
-            response = await self._client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            answer = response.choices[0].message.content or ""
-            logger.info(
-                "OpenAI chat with history — received %d chars", len(answer)
-            )
-            return answer.strip()
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                answer = response.choices[0].message.content or ""
+                logger.info(
+                    "OpenAI chat with history — received %d chars%s",
+                    len(answer),
+                    " after retry" if attempt > 0 else "",
+                )
+                return answer.strip()
 
-        except RateLimitError:
-            logger.warning("OpenAI rate limit hit during chat with history")
-            raise EmbeddingRateLimitError()
+            except RateLimitError:
+                logger.warning("OpenAI rate limit hit during chat with history")
+                raise EmbeddingRateLimitError()
 
-        except APITimeoutError:
-            logger.error("OpenAI chat with history request timed out")
-            raise ChatCompletionError("OpenAI chat completion request timed out")
+            except (APITimeoutError, APIError) as exc:
+                if attempt == _MAX_RETRIES:
+                    if isinstance(exc, APITimeoutError):
+                        logger.error("OpenAI chat with history timed out after retries")
+                        raise ChatCompletionError(
+                            "OpenAI chat completion request timed out"
+                        )
+                    logger.error(
+                        "OpenAI API error during chat with history after retries: %s",
+                        exc,
+                    )
+                    raise ChatCompletionError(f"OpenAI API error: {exc.message}")
+                delay = _BASE_RETRY_DELAY * (2**attempt)
+                logger.warning(
+                    "OpenAI chat with history attempt %d/%d failed, "
+                    "retrying in %.1fs: %s",
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
 
-        except APIError as exc:
-            logger.error("OpenAI API error during chat with history: %s", exc)
-            raise ChatCompletionError(f"OpenAI API error: {exc.message}")
+            except Exception as exc:
+                logger.error("Unexpected error during chat with history: %s", exc)
+                raise ChatCompletionError(str(exc))
 
-        except Exception as exc:
-            logger.error("Unexpected error during chat with history: %s", exc)
-            raise ChatCompletionError(str(exc))
+    # ------------------------------------------------------------------
+    # Streaming chat completions (for WebSocket delivery)
+    # ------------------------------------------------------------------
+
+    async def stream_chat_completion(
+        self,
+        system_prompt: str,
+        user_message: str,
+        temperature: float = 0.2,
+        max_tokens: int = 800,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Stream a chat completion token-by-token.
+        Yields content tokens as they arrive from OpenAI.
+        Used for place Q&A streaming via WebSocket.
+        """
+        model = settings.OPENAI_CHAT_MODEL
+        logger.info("OpenAI stream chat — model: %s, max_tokens: %d", model, max_tokens)
+
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                stream = await self._client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=True,
+                )
+                async for chunk in stream:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if delta and delta.content:
+                        yield delta.content
+                return  # Success — exit generator
+
+            except RateLimitError:
+                logger.warning("OpenAI rate limit hit during stream chat")
+                raise EmbeddingRateLimitError()
+
+            except (APITimeoutError, APIError) as exc:
+                if attempt == _MAX_RETRIES:
+                    if isinstance(exc, APITimeoutError):
+                        logger.error("OpenAI stream chat timed out after retries")
+                        raise ChatCompletionError("OpenAI chat completion timed out")
+                    logger.error(
+                        "OpenAI API error during stream chat after retries: %s",
+                        exc,
+                    )
+                    raise ChatCompletionError(f"OpenAI API error: {exc.message}")
+                delay = _BASE_RETRY_DELAY * (2**attempt)
+                logger.warning(
+                    "OpenAI stream chat attempt %d/%d failed, " "retrying in %.1fs: %s",
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+
+            except Exception as exc:
+                logger.error("Unexpected error during stream chat: %s", exc)
+                raise ChatCompletionError(str(exc))
+
+    async def stream_chat_with_history(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1000,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Stream a chat completion with full message history token-by-token.
+        Used for general chat streaming via WebSocket.
+        """
+        model = settings.OPENAI_CHAT_MODEL
+        logger.info(
+            "OpenAI stream chat with history — model: %s, messages: %d, "
+            "max_tokens: %d",
+            model,
+            len(messages),
+            max_tokens,
+        )
+
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                stream = await self._client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=True,
+                )
+                async for chunk in stream:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if delta and delta.content:
+                        yield delta.content
+                return  # Success — exit generator
+
+            except RateLimitError:
+                logger.warning("OpenAI rate limit hit during stream chat with history")
+                raise EmbeddingRateLimitError()
+
+            except (APITimeoutError, APIError) as exc:
+                if attempt == _MAX_RETRIES:
+                    if isinstance(exc, APITimeoutError):
+                        logger.error(
+                            "OpenAI stream chat with history timed out after retries"
+                        )
+                        raise ChatCompletionError("OpenAI chat completion timed out")
+                    logger.error(
+                        "OpenAI API error during stream chat with history "
+                        "after retries: %s",
+                        exc,
+                    )
+                    raise ChatCompletionError(f"OpenAI API error: {exc.message}")
+                delay = _BASE_RETRY_DELAY * (2**attempt)
+                logger.warning(
+                    "OpenAI stream chat with history attempt %d/%d failed, "
+                    "retrying in %.1fs: %s",
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+
+            except Exception as exc:
+                logger.error(
+                    "Unexpected error during stream chat with history: %s",
+                    exc,
+                )
+                raise ChatCompletionError(str(exc))

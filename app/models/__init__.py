@@ -12,6 +12,8 @@ from app.models.place_qa_message import PlaceQAMessage
 
 from app.models.ai_chat_session import AIChatSession
 from app.models.ai_chat_message import AIChatMessage
+from app.models.user_saved_place import UserSavedPlace
+from app.models.place_visit_log import PlaceVisitLog
 
 __all__ = [
     "User",
@@ -27,5 +29,6 @@ __all__ = [
     "PlaceQAMessage",
     "AIChatSession",
     "AIChatMessage",
+    "UserSavedPlace",
+    "PlaceVisitLog",
 ]
-

@@ -1,7 +1,6 @@
 import logging
 from fastapi import APIRouter, Depends, Path, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from app.core.rate_limiter import shared_limiter as limiter
 from app.dependencies.auth import get_current_user
 from app.dependencies.knowledge import get_knowledge_service
 from app.models.user import User
@@ -9,12 +8,15 @@ from app.schemas.knowledge import KnowledgeSyncRequest, KnowledgeSyncResponse
 from app.services.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
-limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/places", tags=["Knowledge Sync"], include_in_schema=False)
 
 
-@router.post("/{place_id}/knowledge-sync", response_model=KnowledgeSyncResponse, include_in_schema=False)
+@router.post(
+    "/{place_id}/knowledge-sync",
+    response_model=KnowledgeSyncResponse,
+    include_in_schema=False,
+)
 @limiter.limit("5/minute")
 async def sync_place_knowledge(
     request: Request,

@@ -1,5 +1,4 @@
 import hashlib
-import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,6 +12,7 @@ from app.repositories.redis_repository import RedisRepository
 from app.repositories.search_repository import SearchRepository
 from app.schemas.discovery import (
     DiscoveryPlaceResult,
+    DiscoveryPreset,
     DiscoverySearchRequest,
     NearbyDiscoveryRequest,
     NearbyRankPreference,
@@ -40,7 +40,7 @@ def _build_text_cache_key(
     min_rating: Optional[float],
     rank_preference: Optional[str],
 ) -> str:
-    
+
     lat_str = f"{round(bias_lat, 4)}" if bias_lat is not None else "none"
     lon_str = f"{round(bias_lon, 4)}" if bias_lon is not None else "none"
     raw = (
@@ -62,6 +62,7 @@ def _build_nearby_cache_key(
     lon = round(longitude, 4)
     return f"nearby:{user_id}:{lat}:{lon}:{radius}:{max_result_count}"
 
+
 def _build_autocomplete_cache_key(
     user_id: int,
     input_text: str,
@@ -70,13 +71,16 @@ def _build_autocomplete_cache_key(
     included_types: Optional[List[str]],
     language_code: str,
 ) -> str:
-    
+
     lat_str = f"{round(bias_lat, 4)}" if bias_lat is not None else "none"
     lon_str = f"{round(bias_lon, 4)}" if bias_lon is not None else "none"
     types_str = ",".join(sorted(included_types)) if included_types else "none"
-    raw = f"{input_text.lower().strip()}|{lat_str}|{lon_str}|{types_str}|{language_code}"
+    raw = (
+        f"{input_text.lower().strip()}|{lat_str}|{lon_str}|{types_str}|{language_code}"
+    )
     digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
     return f"autocomplete:{user_id}:{digest}"
+
 
 class DiscoveryService:
     def __init__(
@@ -95,6 +99,7 @@ class DiscoveryService:
         self.search_repo = SearchRepository(db)
         # Explicit TTL for search result caches (1 hour by default)
         from app.core.config import settings
+
         self._search_cache_ttl = settings.REDIS_CACHE_TTL
         self._autocomplete_cache_ttl = settings.REDIS_AUTOCOMPLETE_CACHE_TTL
 
@@ -113,9 +118,7 @@ class DiscoveryService:
     # Internal: cache helpers
     # ------------------------------------------------------------------
 
-    async def _try_get_cache(
-        self, key: str
-    ) -> Optional[List[DiscoveryPlaceResult]]:
+    async def _try_get_cache(self, key: str) -> Optional[List[DiscoveryPlaceResult]]:
         """Return cached places or None.  Never raises."""
         cached = await self.redis_repo.get(key)
         if cached is not None:
@@ -171,7 +174,11 @@ class DiscoveryService:
         except Exception as exc:
             logger.critical(
                 "AUDIT PERSIST FAILED — search data lost (user=%s mode=%s query=%r): %s",
-                user_id, search_mode, raw_query, exc, exc_info=True
+                user_id,
+                search_mode,
+                raw_query,
+                exc,
+                exc_info=True,
             )
             self.db.rollback()
 
@@ -191,17 +198,20 @@ class DiscoveryService:
             bias_radius = request.location_bias.radius
             logger.debug(
                 "Text Search bias: explicit payload (%s, %s) r=%s",
-                bias_lat, bias_lon, bias_radius,
+                bias_lat,
+                bias_lon,
+                bias_radius,
             )
         elif request.use_user_location_as_bias:
             loc = self._get_user_location(user_id)
             if loc:
                 bias_lat = loc.latitude
                 bias_lon = loc.longitude
-                bias_radius = 5000.0   # default bias radius when auto-injected
+                bias_radius = 5000.0  # default bias radius when auto-injected
                 logger.debug(
                     "Text Search bias: user saved location (%s, %s)",
-                    bias_lat, bias_lon,
+                    bias_lat,
+                    bias_lon,
                 )
             else:
                 logger.info(
@@ -245,7 +255,8 @@ class DiscoveryService:
         # Cache miss → call Google
         logger.info(
             "Text Search cache MISS — user=%s query=%r → calling Google",
-            user_id, request.text_query,
+            user_id,
+            request.text_query,
         )
         places = await self.text_client.search_text(
             text_query=request.text_query,
@@ -296,31 +307,36 @@ class DiscoveryService:
 
         # Handle preset and type logic
         included_types = request.included_types
-        
+
         # Priority: preset > included_types > default to PREFERRED_TYPES
         if request.preset:
             included_types = self._get_preset_types(request.preset)
             logger.info(
-                "Using preset '%s' for user_id %s: %s", 
-                request.preset.value, user_id, included_types
+                "Using preset '%s' for user_id %s: %s",
+                request.preset.value,
+                user_id,
+                included_types,
             )
         elif not included_types:
             # Default to preferred types when nothing specified
             included_types = self._get_preset_types(DiscoveryPreset.PREFERRED_TYPES)
             logger.info(
-                "No preset/types specified, defaulting to preferred_types for user_id %s", 
-                user_id
+                "No preset/types specified, defaulting to preferred_types for user_id %s",
+                user_id,
             )
         else:
             # Custom types provided - validate format
             if isinstance(included_types, str):
-                included_types = [t.strip() for t in included_types.split(",") if t.strip()]
+                included_types = [
+                    t.strip() for t in included_types.split(",") if t.strip()
+                ]
                 logger.warning(
                     "included_types was a string, converted to list: %s", included_types
                 )
             elif not isinstance(included_types, list):
                 logger.error(
-                    "included_types has invalid type %s, using default", type(included_types)
+                    "included_types has invalid type %s, using default",
+                    type(included_types),
                 )
                 included_types = self._get_preset_types(DiscoveryPreset.PREFERRED_TYPES)
 
@@ -337,7 +353,9 @@ class DiscoveryService:
         if cached_places is not None:
             logger.info(
                 "Nearby Discovery cache HIT — user=%s lat=%s lon=%s",
-                user_id, latitude, longitude,
+                user_id,
+                latitude,
+                longitude,
             )
             self._persist_audit(
                 user_id=user_id,
@@ -353,9 +371,7 @@ class DiscoveryService:
             return cached_places, True, latitude, longitude
 
         # Cache miss → call Google Nearby Search
-        logger.info(
-            "Nearby Discovery cache MISS — user=%s → calling Google", user_id
-        )
+        logger.info("Nearby Discovery cache MISS — user=%s → calling Google", user_id)
 
         places: List[DiscoveryPlaceResult] = await self.nearby_client.search_nearby(
             latitude=latitude,
@@ -388,17 +404,15 @@ class DiscoveryService:
     def _get_preset_types(self, preset: "DiscoveryPreset") -> List[str]:
         """
         Return place types based on discovery preset.
-        
+
         - preferred_types: Everyday useful places
         - famous_places: Tourist attractions and landmarks
         """
-        from app.schemas.discovery import DiscoveryPreset
-        
         if preset == DiscoveryPreset.PREFERRED_TYPES:
             return [
                 # Religious places
                 "hindu_temple",
-                "mosque", 
+                "mosque",
                 "church",
                 # Food & Dining
                 "restaurant",
@@ -453,7 +467,9 @@ class DiscoveryService:
         mode = self._choose_mode(request.query)
         logger.info(
             "Discovery Router — user=%s query=%r → mode=%s",
-            user_id, request.query, mode,
+            user_id,
+            request.query,
+            mode,
         )
 
         if mode == "text":
@@ -463,7 +479,7 @@ class DiscoveryService:
                 else None
             )
             text_req = TextSearchRequest(
-                text_query=request.query,  # type: ignore[arg-type]
+                text_query=request.query or "",
                 max_result_count=request.max_result_count,
                 open_now=request.open_now,
                 min_rating=request.min_rating,
@@ -510,10 +526,11 @@ class DiscoveryService:
             if loc:
                 bias_lat = loc.latitude
                 bias_lon = loc.longitude
-                bias_radius = 500.0  # 5km bias radius for autocomplete
+                bias_radius = 5000.0  # 5km bias radius for autocomplete
                 logger.debug(
                     "Autocomplete bias: user saved location (%s, %s)",
-                    bias_lat, bias_lon,
+                    bias_lat,
+                    bias_lon,
                 )
             else:
                 logger.info(
@@ -542,7 +559,8 @@ class DiscoveryService:
         # Cache miss → call Google
         logger.info(
             "Autocomplete cache MISS — user=%s input=%r → calling Google",
-            user_id, input_text,
+            user_id,
+            input_text,
         )
         predictions = await self.autocomplete_client.autocomplete(
             input_text=input_text,
@@ -559,6 +577,8 @@ class DiscoveryService:
                 cache_key, predictions, ttl=self._autocomplete_cache_ttl
             )
         except Exception as exc:
-            logger.warning("Autocomplete cache write failed for key %s: %s", cache_key, exc)
+            logger.warning(
+                "Autocomplete cache write failed for key %s: %s", cache_key, exc
+            )
 
         return predictions, False, bias_lat, bias_lon

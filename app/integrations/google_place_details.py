@@ -20,27 +20,55 @@ from app.schemas.place_details import (
 
 logger = logging.getLogger(__name__)
 
-DETAILS_FIELD_MASK = ",".join([
-    "id",
-    "displayName",
-    "formattedAddress",
-    "location",
-    "types",
-    "primaryType",
-    "businessStatus",
-    "currentOpeningHours",
-    "internationalPhoneNumber",
-    "nationalPhoneNumber",
-    "websiteUri",
-    "googleMapsUri",
-    "rating",
-    "userRatingCount",
-    "priceLevel",
-    "editorialSummary",
-    "photos",
-    "reviews",
-    "accessibilityOptions",
-])
+DETAILS_FIELD_MASK = ",".join(
+    [
+        "id",
+        "displayName",
+        "formattedAddress",
+        "location",
+        "types",
+        "primaryType",
+        "businessStatus",
+        "currentOpeningHours",
+        "regularOpeningHours",
+        "regularSecondaryOpeningHours",
+        "internationalPhoneNumber",
+        "nationalPhoneNumber",
+        "websiteUri",
+        "googleMapsUri",
+        "rating",
+        "userRatingCount",
+        "priceLevel",
+        "editorialSummary",
+        "photos",
+        "reviews",
+        "accessibilityOptions",
+        "parkingOptions",
+        "paymentOptions",
+        "dineIn",
+        "takeout",
+        "delivery",
+        "curbsidePickup",
+        "reservable",
+        "servesBreakfast",
+        "servesLunch",
+        "servesDinner",
+        "servesBeer",
+        "servesWine",
+        "servesCocktails",
+        "outdoorSeating",
+        "liveMusic",
+        "goodForChildren",
+        "goodForGroups",
+        "restroom",
+        "allowsDogs",
+        "utcOffsetMinutes",
+        "plusCode",
+        "addressComponents",
+        "evChargeOptions",
+        "subDestinations",
+    ]
+)
 
 
 class GooglePlaceDetailsClient:
@@ -52,7 +80,6 @@ class GooglePlaceDetailsClient:
 
     def _build_headers(self) -> Dict[str, str]:
         return {
-            "Content-Type": "application/json",
             "X-Goog-Api-Key": self.api_key,
             "X-Goog-FieldMask": DETAILS_FIELD_MASK,
         }
@@ -110,9 +137,7 @@ class GooglePlaceDetailsClient:
                     author_name=author.get("displayName"),
                     rating=r.get("rating"),
                     text=(
-                        text_obj.get("text")
-                        if isinstance(text_obj, dict)
-                        else text_obj
+                        text_obj.get("text") if isinstance(text_obj, dict) else text_obj
                     ),
                     publish_time=r.get("publishTime"),
                     relative_publish_time_description=r.get(
@@ -130,10 +155,10 @@ class GooglePlaceDetailsClient:
             logger.info(
                 "Place ID canonicalised by Google: requested=%s canonical=%s — "
                 "storing as requested id to preserve lookup consistency (B15/B-033)",
-                requested_place_id, google_returned_id,
+                requested_place_id,
+                google_returned_id,
             )
             # B-033 FIX: Store canonical ID in editorial summary metadata
-            # so we can reconcile later if needed
             editorial_obj = data.get("editorialSummary", {})
             editorial_text = (
                 editorial_obj.get("text")
@@ -141,13 +166,20 @@ class GooglePlaceDetailsClient:
                 else editorial_obj
             )
             if editorial_text:
-                editorial_text = f"{editorial_text} [canonical_id: {google_returned_id}]"
-            data["editorialSummary"] = {"text": editorial_text} if editorial_text else editorial_obj
+                editorial_text = (
+                    f"{editorial_text} [canonical_id: {google_returned_id}]"
+                )
+            data["editorialSummary"] = (
+                {"text": editorial_text} if editorial_text else editorial_obj
+            )
 
         location = data.get("location", {})
         display_name_obj = data.get("displayName", {})
         editorial_obj = data.get("editorialSummary", {})
         accessibility = data.get("accessibilityOptions", {})
+        parking = data.get("parkingOptions", {})
+        payment = data.get("paymentOptions", {})
+        ev = data.get("evChargeOptions", {})
 
         opening_hours = self._parse_opening_hours(data.get("currentOpeningHours"))
         photos = self._parse_photos(data.get("photos"))
@@ -156,6 +188,113 @@ class GooglePlaceDetailsClient:
         open_now: Optional[bool] = None
         if opening_hours is not None:
             open_now = opening_hours.open_now
+
+        # Collect all extended fields into a single dict
+        extended: Dict[str, Any] = {}
+
+        # Regular + secondary opening hours (raw dict for enrichment)
+        regular_hours = data.get("regularOpeningHours")
+        if regular_hours:
+            extended["regular_opening_hours"] = regular_hours
+        secondary_hours = data.get("regularSecondaryOpeningHours")
+        if secondary_hours:
+            extended["secondary_opening_hours"] = secondary_hours
+
+        # Parking
+        if parking:
+            for k, v in parking.items():
+                extended[f"parking_{k}"] = v
+
+        # Payment
+        if payment:
+            for k, v in payment.items():
+                extended[f"payment_{k}"] = v
+
+        # Dining / service flags
+        for flag in ["dineIn", "takeout", "delivery", "curbsidePickup", "reservable"]:
+            val = data.get(flag)
+            if val is not None:
+                extended[flag] = val
+
+        # Food & drink
+        for flag in [
+            "servesBreakfast",
+            "servesLunch",
+            "servesDinner",
+            "servesBeer",
+            "servesWine",
+            "servesCocktails",
+        ]:
+            val = data.get(flag)
+            if val is not None:
+                extended[flag] = val
+
+        # Atmosphere / features
+        for flag in [
+            "outdoorSeating",
+            "liveMusic",
+            "goodForChildren",
+            "goodForGroups",
+            "restroom",
+            "allowsDogs",
+        ]:
+            val = data.get(flag)
+            if val is not None:
+                extended[flag] = val
+
+        # EV charging
+        if ev:
+            extended["ev_charger_options"] = ev
+
+        # Timezone
+        utc_offset = data.get("utcOffsetMinutes")
+        if utc_offset is not None:
+            extended["utc_offset_minutes"] = utc_offset
+
+        # Plus code
+        plus_code = data.get("plusCode", {})
+        if plus_code:
+            extended["plus_code"] = plus_code.get("globalCode") or plus_code.get(
+                "compoundCode"
+            )
+
+        # Address components (for neighborhood, locality extraction)
+        addr_components = data.get("addressComponents", [])
+        if addr_components:
+            neighborhoods = []
+            localities = []
+            sublocalities = []
+            for comp in addr_components:
+                types_list = comp.get("types", [])
+                text = comp.get("longText") or ""
+                if "neighborhood" in types_list:
+                    neighborhoods.append(text)
+                if "locality" in types_list:
+                    localities.append(text)
+                if "sublocality" in types_list:
+                    sublocalities.append(text)
+            if neighborhoods:
+                extended["neighborhood"] = neighborhoods[0]
+            if localities:
+                extended["locality"] = localities[0]
+            if sublocalities:
+                extended["sublocality"] = sublocalities[0]
+
+        # Sub destinations (airport terminals, mall sections, park zones)
+        sub_destinations = data.get("subDestinations", [])
+        if sub_destinations:
+            extended["sub_destinations"] = [
+                {
+                    "name": (
+                        sd.get("name", {}).get("text")
+                        if isinstance(sd.get("name"), dict)
+                        else sd.get("name")
+                    ),
+                    "place_id": sd.get("id"),
+                }
+                for sd in sub_destinations
+                if sd.get("name") or sd.get("id")
+            ]
 
         return PlaceDetailResult(
             # B15: Always use the requested id as the key, not Google's canonical
@@ -190,13 +329,14 @@ class GooglePlaceDetailsClient:
                 if isinstance(editorial_obj, dict)
                 else editorial_obj
             ),
+            extended_data=extended if extended else None,
         )
 
     async def _do_request(self, url: str, headers: Dict) -> httpx.Response:
-        
+
         if self._http_client is not None:
             return await self._http_client.get(url, headers=headers)
-        
+
         # B-030 FIX: Log warning for fallback usage
         logger.warning(
             "GooglePlaceDetailsClient: No shared HTTP client - creating per-request client. "
@@ -215,9 +355,7 @@ class GooglePlaceDetailsClient:
             response = await self._do_request(url, headers)
 
             if response.status_code == 404:
-                logger.warning(
-                    "Google Place Details: place_id %s not found", place_id
-                )
+                logger.warning("Google Place Details: place_id %s not found", place_id)
                 raise PlaceDetailNotFoundError(place_id)
 
             if response.status_code == 429:
@@ -235,13 +373,48 @@ class GooglePlaceDetailsClient:
                 )
 
             if response.status_code != 200:
+                error_body = (
+                    response.text[:1000] if response.text else "No response body"
+                )
                 logger.error(
                     "Google Place Details error %s for place_id %s: %s",
-                    response.status_code, place_id, response.text[:500],
+                    response.status_code,
+                    place_id,
+                    error_body,
                 )
+
+                # Try to parse the actual Google error message from the response
+                try:
+                    error_data = response.json()
+                    error_message = error_data.get("error", {}).get(
+                        "message", error_body
+                    )
+                    logger.error(
+                        "Google API error details — message: %s",
+                        error_message,
+                    )
+                except Exception:
+                    error_message = error_body
+
+                # If Google says the place doesn't exist ("not found" / "NOT_FOUND"),
+                # raise 404 instead of 502 for a better client experience
+                is_not_found = any(
+                    keyword in str(error_message).lower()
+                    for keyword in [
+                        "not found",
+                        "not_found",
+                        "does not exist",
+                        "notexist",
+                    ]
+                )
+                if response.status_code == 404 or (
+                    response.status_code == 400 and is_not_found
+                ):
+                    raise PlaceDetailNotFoundError(place_id)
+
                 raise GooglePlacesAPIError(
                     f"Google Place Details API returned status "
-                    f"{response.status_code} for place '{place_id}'"
+                    f"{response.status_code} for place '{place_id}': {error_message}"
                 )
 
             data = response.json()
@@ -267,6 +440,7 @@ class GooglePlaceDetailsClient:
         except Exception as exc:
             logger.error(
                 "Unexpected error fetching Google Place Details for %s: %s",
-                place_id, exc,
+                place_id,
+                exc,
             )
             raise GooglePlacesAPIError(str(exc))

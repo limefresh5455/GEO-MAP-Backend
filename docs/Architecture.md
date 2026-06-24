@@ -1,0 +1,314 @@
+# 🏗️ System Architecture
+
+## GeoMap — Location-Based Discovery Platform
+
+---
+
+## 1. High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                          CLIENT LAYER                               │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌───────────────────┐  │
+│  │ Web Frontend    │  │ Mobile App      │  │ API Consumer      │  │
+│  │ (Vanilla JS)    │  │ (Future)        │  │ (3rd Party)       │  │
+│  └────────┬────────┘  └────────┬────────┘  └────────┬──────────┘  │
+│           │                    │                     │              │
+└───────────┼────────────────────┼─────────────────────┼──────────────┘
+            │ HTTP REST          │ WebSocket           │ HTTP REST
+            ▼                    ▼                     ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       API GATEWAY LAYER                             │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  FastAPI (uvicorn) on port 8000                              │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌──────────────┐ │  │
+│  │  │ CORS     │ │ Rate     │ │ Global     │ │ OpenAPI      │ │  │
+│  │  │ Middleware│ │ Limiter  │ │ Exception  │ │ Docs (Swagger)│ │  │
+│  │  └──────────┘ └──────────┘ └────────────┘ └──────────────┘ │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────────┐
+        │                     │                         │
+        ▼                     ▼                         ▼
+┌───────────────┐   ┌──────────────────┐   ┌──────────────────────┐
+│  REST API     │   │  WebSocket       │   │  Health Check        │
+│  /api/v1/*    │   │  /ws/chat        │   │  GET /               │
+│  10 routers   │   │  Streaming       │   │                      │
+└───────┬───────┘   └────────┬─────────┘   └──────────────────────┘
+        │                    │
+        ▼                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                        SERVICE LAYER                                │
+│                                                                     │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────────┐  │
+│  │ Auth       │ │ Discovery  │ │ Routes     │ │ AI Chat        │  │
+│  │ Service    │ │ Service    │ │ Service    │ │ Service        │  │
+│  ├────────────┤ ├────────────┤ ├────────────┤ ├────────────────┤  │
+│  │ Place QA   │ │ Knowledge  │ │ Place      │ │ Weather        │  │
+│  │ Service    │ │ Service    │ │ Details    │ │ Service        │  │
+│  │            │ │            │ │ Service    │ │                │  │
+│  ├────────────┤ ├────────────┤ ├────────────┤ ├────────────────┤  │
+│  │ Location   │ │ Credit     │ │ OTP        │ │ Token          │  │
+│  │ Service    │ │ Service    │ │ Service    │ │ Blacklist Svc  │  │
+│  └────────────┘ └────────────┘ └────────────┘ └────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+        │                    │                  │
+        ▼                    ▼                  ▼
+┌──────────────┐   ┌────────────────┐   ┌──────────────────────────┐
+│ Repository   │   │ Integration    │   │ External Services         │
+│ Layer        │   │ Layer          │   │                           │
+│              │   │                │   │ ┌──────────────────────┐  │
+│ ┌──────────┐ │   │ ┌────────────┐ │   │ │ Google Places API   │  │
+│ │ SQLAlchemy│ │   │ │ OpenAI     │ │   │ │ (New)               │  │
+│ │ ORM       │ │   │ │ Client     │ │   │ └──────────────────────┘  │
+│ └──────────┘ │   │ └────────────┘ │   │ ┌──────────────────────┐  │
+│              │   │ ┌────────────┐ │   │ │ Google Routes API   │  │
+│ ┌──────────┐ │   │ │ Pinecone   │ │   │ └──────────────────────┘  │
+│ │ Redis     │ │   │ │ Client    │ │   │ ┌──────────────────────┐  │
+│ │ Cache     │ │   │ └────────────┘ │   │ │ OpenAI API          │  │
+│ └──────────┘ │   │ ┌────────────┐ │   │ └──────────────────────┘  │
+│              │   │ │ Google     │ │   │ ┌──────────────────────┐  │
+│              │   │ │ Clients    │ │   │ │ Pinecone API        │  │
+│              │   │ └────────────┘ │   │ └──────────────────────┘  │
+│              │   │ ┌────────────┐ │   │ ┌──────────────────────┐  │
+│              │   │ │ Open-Meteo │ │   │ │ Open-Meteo API      │  │
+│              │   │ │ Client     │ │   │ └──────────────────────┘  │
+│              │   │ └────────────┘ │   │ ┌──────────────────────┐  │
+│              │   │                │   │ │ SMTP (Gmail)        │  │
+│              │   │                │   │ └──────────────────────┘  │
+│              │   │                │   │                           │
+└──────────────┘   └────────────────┘   └──────────────────────────┘
+```
+
+---
+
+## 2. Database Schema Design
+
+### Core Tables
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                           users                                      │
+├──────────────┬────────────┬────────────────────────────────────────┤
+│ Column       │ Type       │ Notes                                   │
+├──────────────┼────────────┼────────────────────────────────────────┤
+│ id           │ SERIAL PK  │ Internal user ID (used in JWT sub)      │
+│ full_name    │ VARCHAR    │ Display name                            │
+│ email        │ VARCHAR    │ Unique, used for login + OTP            │
+│ hashed_pass  │ VARCHAR    │ bcrypt hash (NULL for Clerk legacy)     │
+│ credits      │ INTEGER    │ Default 50, deducted per AI call        │
+│ is_active    │ BOOLEAN    │ Soft delete flag                        │
+│ auth_provider│ VARCHAR    │ 'local' or 'clerk'                      │
+│ created_at   │ TIMESTAMPTZ│ Account creation time                   │
+│ updated_at   │ TIMESTAMPTZ│ Last profile update                     │
+└──────────────┴────────────┴────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                     user_locations                                   │
+├──────────────┬────────────┬────────────────────────────────────────┤
+│ id           │ SERIAL PK  │                                          │
+│ user_id      │ FK → users │                                          │
+│ latitude     │ FLOAT      │ GPS coordinate                          │
+│ longitude    │ FLOAT      │ GPS coordinate                          │
+│ accuracy     │ FLOAT      │ GPS accuracy in meters                  │
+│ source       │ VARCHAR    │ 'gps' or 'manual'                       │
+│ is_current   │ BOOLEAN    │ Only one per user can be True           │
+│ is_active    │ BOOLEAN    │ Soft delete flag                        │
+│ created_at   │ TIMESTAMPTZ│                                          │
+└──────────────┴────────────┴────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                     place_details                                    │
+├──────────────┬────────────┬────────────────────────────────────────┤
+│ place_id     │ VARCHAR PK │ Google Place ID                         │
+│ display_name │ VARCHAR    │ Human-readable name                     │
+│ latitude     │ FLOAT      │                                          │
+│ longitude    │ FLOAT      │                                          │
+│ rating       │ FLOAT      │ Google rating (1.0–5.0)                 │
+│ opening_hours│ JSONB      │ Structured hours data                   │
+│ reviews      │ JSONB      │ Up to 5 reviews                         │
+│ photos       │ JSONB      │ Photo references                        │
+│ price_level  │ VARCHAR    │ FREE / INEXPENSIVE / MODERATE / etc.    │
+│ knowledge_synced│ BOOLEAN │ Flag for Pinecone sync status           │
+│ last_fetched │ TIMESTAMPTZ│ When last fetched from Google            │
+└──────────────┴────────────┴────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                     place_qa_sessions                                │
+├──────────────┬────────────┬────────────────────────────────────────┤
+│ id           │ VARCHAR PK │ UUID v4 string                          │
+│ user_id      │ INTEGER    │ Owner                                   │
+│ place_id     │ VARCHAR    │ Google Place ID (nullable for general)  │
+│ title        │ VARCHAR    │ Auto-generated from first question      │
+│ is_deleted   │ BOOLEAN    │ Soft delete                             │
+│ last_message │ TIMESTAMPTZ│ For sorting by recent                   │
+│ created_at   │ TIMESTAMPTZ│                                          │
+└──────────────┴────────────┴────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                     place_qa_messages                                │
+├──────────────┬────────────┬────────────────────────────────────────┤
+│ id           │ SERIAL PK  │                                          │
+│ session_id   │ FK → sessions │ UUID v4                              │
+│ role         │ VARCHAR    │ 'user' or 'assistant'                   │
+│ content      │ TEXT       │ Message content                         │
+│ token_count  │ INTEGER    │ tiktoken estimate                       │
+│ metadata_json│ JSONB      │ answer_source, confidence, etc.         │
+│ created_at   │ TIMESTAMPTZ│                                          │
+└──────────────┴────────────┴────────────────────────────────────────┘
+```
+
+### Full List of Tables (22 migrations)
+
+| Table | Purpose |
+|-------|---------|
+| users | User accounts, auth, credits |
+| user_locations | Active + historical locations |
+| location_history | Immutable GPS trail |
+| search_queries | Audit log of user searches |
+| search_results | Place results per search query |
+| place_details | Cached Google Places data |
+| place_knowledge_sync | Pinecone sync state tracking |
+| place_questions | Audit log of individual questions |
+| place_answer_logs | Audit log of AI answers |
+| place_qa_sessions | Q&A conversation sessions |
+| place_qa_messages | Individual messages in Q&A sessions |
+| ai_chat_sessions | General AI chat sessions |
+| ai_chat_messages | Messages in AI chat sessions |
+
+---
+
+## 3. External Service Integration Architecture
+
+### Google Places API (New)
+```
+Client → Discovery Service → GoogleTextSearchClient
+  → POST places:searchText   (Field mask for cost control)
+  → Response parsed into DiscoveryPlaceResult
+  → Cached in Redis (1 hour)
+  → Audited to search_queries + search_results
+```
+
+### Google Routes API
+```
+Client → Routes Service → GoogleRoutesClient
+  → POST computeRoutes / computeRouteMatrix
+  → RouteResult parsed with traffic delay computation
+  → Cached in Redis (5 min routes, 2 min matrix)
+```
+
+### OpenAI (Embeddings + Chat)
+```
+Client → Knowledge Service → OpenAIEmbeddingClient
+  → POST embeddings (batch, max 100 texts)
+  → Extracted vectors stored in Pinecone
+  
+Client → Place Q&A Service → OpenAIEmbeddingClient
+  → POST chat/completions (streaming for WebSocket)
+  → RAG context built from Pinecone matches + structured DB data
+```
+
+### Pinecone (Vector Database)
+```
+Knowledge Sync → Chunk place data → Embed → Upsert vectors
+Place Q&A → Embed question → Query Pinecone → Filter by score
+  → Build context → Call OpenAI → Return grounded answer
+```
+
+---
+
+## 4. Caching Strategy
+
+| Data Type | Cache Layer 1 | Cache Layer 2 | TTL |
+|-----------|--------------|---------------|-----|
+| Place search results | Redis | — | 1 hour |
+| Place details | Redis | PostgreSQL | 24 hours |
+| Routes | Redis | — | 5 minutes |
+| Route matrix | Redis | — | 2 minutes |
+| Autocomplete | Redis | — | 5 minutes |
+| OTP registrations | Redis | — | 2 minutes |
+| Token blacklist | Redis | — | Capped at 1 hour |
+| User preferences | PostgreSQL | — | Permanent |
+
+---
+
+## 5. WebSocket Protocol
+
+### Connection Flow
+```
+1. Client → WebSocket connect to /ws/chat
+2. Server accepts connection
+3. Client sends auth message: {"type":"auth","token":"Bearer <jwt>"}
+4. Server validates → sends {"type":"connected","user_id":...}
+5. Client sends messages (see below)
+6. Server streams token-by-token responses
+```
+
+### Message Types
+| Type | Direction | Purpose |
+|------|-----------|---------|
+| auth | Client→Server | JWT authentication (first message) |
+| chat_message | Client→Server | General AI chat query |
+| place_question | Client→Server | Place-specific Q&A query |
+| connected | Server→Client | Auth success acknowledgment |
+| metadata | Server→Client | Session ID + new/existing flag |
+| token | Server→Client | Streaming content chunk |
+| done | Server→Client | Stream complete, includes title |
+| error | Server→Client | Error with message |
+
+---
+
+## 6. RAG Pipeline (Place Q&A)
+
+```
+User Question
+      │
+      ▼
+┌────────────────┐
+│ Check Credits  │ (5 credits required)
+└────────┬───────┘
+         │
+         ▼
+┌────────────────┐     ┌───────────────────────┐
+│ Session Mgmt   │────→│ Create or continue     │
+└────────┬───────┘     │ session (100 max)      │
+         │             └───────────────────────┘
+         ▼
+┌────────────────┐
+│ Load Place     │──→ PostgreSQL place_details
+└────────┬───────┘
+         │
+         ▼
+┌────────────────┐     ┌───────────────────────┐
+│ Embed Question │────→│ OpenAI embeddings API  │
+└────────┬───────┘     └───────────────────────┘
+         │
+         ▼
+┌────────────────┐     ┌───────────────────────┐
+│ Query Pinecone │────→│ Top-k matching chunks  │
+└────────┬───────┘     │ filtered by score≥0.30 │
+         │             └───────────────────────┘
+         ▼
+┌────────────────┐
+│ Build Context  │──→ Structured facts + conversation history
+└────────┬───────┘     + Pinecone chunks (token-budgeted)
+         │
+         ▼
+┌────────────────┐     ┌───────────────────────┐
+│ Call OpenAI    │────→│ GPT-4o-mini with      │
+│ (Streaming)    │     │ strict RAG system prompt
+└────────┬───────┘     └───────────────────────┘
+         │
+         ▼
+┌────────────────┐
+│ Token Stream   │──→ WebSocket / REST Response
+└────────┬───────┘
+         │
+         ▼
+┌────────────────┐
+│ Persist:       │──→ Deduct credits → Save messages
+│ Credits + Msgs │    → Update session timestamp
+│ + Audit Log    │    → Commit (atomic)
+└────────────────┘
+```

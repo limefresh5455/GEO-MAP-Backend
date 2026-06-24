@@ -6,7 +6,6 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 _redis_client: Optional[aioredis.Redis] = None
-# B-011 FIX: Lock to prevent concurrent initialization
 _redis_lock = asyncio.Lock()
 
 
@@ -16,14 +15,12 @@ def get_redis_client() -> Optional[aioredis.Redis]:
 
 async def initialise_redis() -> None:
     global _redis_client
-    
-    # B-011 FIX: Acquire lock to prevent concurrent initialization
+
     async with _redis_lock:
-        # Check if already initialized (another coroutine may have done it)
         if _redis_client is not None:
             logger.info("Redis already initialized")
             return
-            
+
         try:
             client = aioredis.Redis(
                 host=settings.REDIS_HOST,
@@ -43,7 +40,6 @@ async def initialise_redis() -> None:
                 settings.REDIS_PORT,
             )
         except Exception as exc:
-            # B05: Non-fatal — warn and continue with cache disabled
             logger.warning(
                 "Redis unavailable at startup (%s:%s) — running without cache. "
                 "All search and detail requests will hit Google directly. "
@@ -57,7 +53,7 @@ async def initialise_redis() -> None:
 
 async def close_redis() -> None:
     global _redis_client
-    
+
     async with _redis_lock:
         if _redis_client:
             await _redis_client.aclose()

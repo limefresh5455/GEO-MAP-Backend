@@ -78,7 +78,6 @@ def upgrade() -> None:
         ondelete="SET NULL",
     )
 
-    # ------------------------------------------------------------------ #
     # 2. ai_chat_sessions: INTEGER PK → VARCHAR(36) UUID                  #
     #    ai_chat_messages:  INTEGER FK → VARCHAR(36)                       #
     # ------------------------------------------------------------------ #
@@ -152,9 +151,7 @@ def downgrade() -> None:
         sa.Column("id_old", sa.Integer(), nullable=True),
     )
     # Only rows whose id is a plain integer string can be cast back
-    op.execute(
-        "UPDATE ai_chat_sessions SET id_old = id::integer WHERE id ~ '^[0-9]+$'"
-    )
+    op.execute("UPDATE ai_chat_sessions SET id_old = id::integer WHERE id ~ '^[0-9]+$'")
 
     op.execute(
         "ALTER TABLE ai_chat_messages "
@@ -215,14 +212,26 @@ def downgrade() -> None:
     )
 
     op.create_foreign_key(
-        "place_qa_messages_session_id_fkey", "place_qa_messages", "place_qa_sessions",
-        ["session_id"], ["id"], ondelete="CASCADE",
+        "place_qa_messages_session_id_fkey",
+        "place_qa_messages",
+        "place_qa_sessions",
+        ["session_id"],
+        ["id"],
+        ondelete="CASCADE",
     )
     op.create_foreign_key(
-        "fk_place_questions_session_id", "place_questions", "place_qa_sessions",
-        ["session_id"], ["id"], ondelete="SET NULL",
+        "fk_place_questions_session_id",
+        "place_questions",
+        "place_qa_sessions",
+        ["session_id"],
+        ["id"],
+        ondelete="SET NULL",
     )
     op.create_foreign_key(
-        "fk_place_answer_logs_session_id", "place_answer_logs", "place_qa_sessions",
-        ["session_id"], ["id"], ondelete="SET NULL",
+        "fk_place_answer_logs_session_id",
+        "place_answer_logs",
+        "place_qa_sessions",
+        ["session_id"],
+        ["id"],
+        ondelete="SET NULL",
     )

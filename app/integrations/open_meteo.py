@@ -75,7 +75,7 @@ class OpenMeteoClient:
                     )
                     raise OpenMeteoTimeoutError() from exc
 
-                delay = self._backoff_factor * (2 ** attempt)
+                delay = self._backoff_factor * (2**attempt)
                 logger.info(
                     "Open-Meteo request failed, retrying in %.1fs (attempt %s): %s",
                     delay,

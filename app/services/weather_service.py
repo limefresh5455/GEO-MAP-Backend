@@ -2,7 +2,7 @@ import logging
 from datetime import date
 from typing import Dict
 from sqlalchemy.orm import Session
-from app.exceptions.custom_exceptions import LocationNotFoundError
+from app.exceptions.places import UserLocationNotFoundError
 from app.integrations.open_meteo import OpenMeteoClient
 from app.models.user_location import UserLocation
 from app.repositories.location_repository import LocationRepository
@@ -23,9 +23,7 @@ class WeatherService:
     def _get_location(self, user_id: int) -> UserLocation:
         location = self._location_repo.get_current_location(user_id)
         if not location:
-            raise LocationNotFoundError(
-                "No active location found for this user. POST /api/v1/locations/gps first."
-            )
+            raise UserLocationNotFoundError()
         return location
 
     async def get_forecast(

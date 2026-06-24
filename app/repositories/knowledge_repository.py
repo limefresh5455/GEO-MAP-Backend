@@ -17,9 +17,7 @@ class KnowledgeRepository:
     def get_place_detail(self, place_id: str) -> Optional[PlaceDetail]:
         """Return the canonical place record, or None if not yet fetched."""
         return (
-            self.db.query(PlaceDetail)
-            .filter(PlaceDetail.place_id == place_id)
-            .first()
+            self.db.query(PlaceDetail).filter(PlaceDetail.place_id == place_id).first()
         )
 
     def get_sync_record(self, place_id: str) -> Optional[PlaceKnowledgeSync]:
@@ -54,7 +52,9 @@ class KnowledgeRepository:
             self.db.flush()
             logger.debug(
                 "PlaceKnowledgeSync updated: place_id=%s status=%s vectors=%d",
-                place_id, sync_status, vector_count,
+                place_id,
+                sync_status,
+                vector_count,
             )
             return existing
 
@@ -71,7 +71,9 @@ class KnowledgeRepository:
         self.db.flush()
         logger.debug(
             "PlaceKnowledgeSync inserted: place_id=%s status=%s vectors=%d",
-            place_id, sync_status, vector_count,
+            place_id,
+            sync_status,
+            vector_count,
         )
         return record
 

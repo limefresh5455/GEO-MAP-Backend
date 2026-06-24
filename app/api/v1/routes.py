@@ -1,7 +1,5 @@
 import logging
 from fastapi import APIRouter, Depends
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from app.dependencies.auth import get_current_user
 from app.dependencies.routes import get_routes_service
 from app.exceptions.custom_exceptions import LocationNotFoundError
@@ -22,8 +20,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/routes", tags=["Routes"])
 
-limiter = Limiter(key_func=get_remote_address)
-
 
 @router.post("/compute", response_model=RouteResponse)
 async def compute_route(
@@ -31,7 +27,7 @@ async def compute_route(
     current_user: User = Depends(get_current_user),
     service: RoutesService = Depends(get_routes_service),
 ):
-    """    
+    """
     **Request body:**
     ```json
     {
@@ -43,7 +39,8 @@ async def compute_route(
     logger.info(
         "compute_route — user_id: %s, destination: %s, mode: %s",
         current_user.id,
-        payload.place_id or f"({payload.destination_latitude}, {payload.destination_longitude})",
+        payload.place_id
+        or f"({payload.destination_latitude}, {payload.destination_longitude})",
         payload.travel_mode.value,
     )
 
@@ -53,33 +50,30 @@ async def compute_route(
             user_id=current_user.id,
         )
     except UserLocationNotFoundError as exc:
-        logger.error("compute_route failed — user_id: %s — No location found", current_user.id)
+        logger.error(
+            "compute_route failed — user_id: %s — No location found", current_user.id
+        )
         raise LocationNotFoundError() from exc
     except GooglePlacesRateLimitError:
-        logger.warning("compute_route — Routes API rate limit exceeded for user_id: %s", current_user.id)
+        logger.warning(
+            "compute_route — Routes API rate limit exceeded for user_id: %s",
+            current_user.id,
+        )
         raise
     except GooglePlacesTimeoutError:
-        logger.error("compute_route — Routes API timed out for user_id: %s", current_user.id)
-        raise
-    except GooglePlacesAPIError as exc:
         logger.error(
-            "compute_route — Routes API error for user_id: %s, destination: %s, error: %s",
-            current_user.id,
-            payload.place_id,
-            str(exc),
+            "compute_route — Routes API timed out for user_id: %s", current_user.id
         )
         raise
-    except Exception as exc:
-        logger.critical(
-            "compute_route — UNEXPECTED ERROR for user_id: %s, error: %s",
-            current_user.id,
-            str(exc),
-            exc_info=True
-        )
+    except GooglePlacesAPIError:
         raise
 
-    # Attach origin coordinates to the response metadata for map centering
-    response_dict = response.model_dump()
-    response_dict["origin_latitude"] = origin_lat
-    response_dict["origin_longitude"] = origin_lon
-    return response_dict
+    # Attach origin coordinates to the response for map centering
+    # BUG FIX: Use model_copy instead of dump + reconstruct, which is
+    # both more efficient and avoids potential serialization issues.
+    return response.model_copy(
+        update={
+            "origin_latitude": origin_lat,
+            "origin_longitude": origin_lon,
+        }
+    )

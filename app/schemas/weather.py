@@ -2,6 +2,7 @@ from datetime import date
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field, field_validator
 
+
 class WeatherRequest(BaseModel):
     start_date: Optional[date] = Field(
         None,

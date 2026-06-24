@@ -10,6 +10,15 @@ from app.exceptions.places import (
 
 logger = logging.getLogger(__name__)
 
+AUTOCOMPLETE_FIELD_MASK = ",".join(
+    [
+        "suggestions.placePrediction.placeId",
+        "suggestions.placePrediction.text",
+        "suggestions.placePrediction.structuredFormat",
+        "suggestions.placePrediction.types",
+    ]
+)
+
 
 class GoogleAutocompleteClient:
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None) -> None:
@@ -70,13 +79,15 @@ class GoogleAutocompleteClient:
             main_text = structured.get("mainText", {}).get("text", "")
             secondary_text = structured.get("secondaryText", {}).get("text", "")
 
-            predictions.append({
-                "place_id": place_prediction.get("placeId", ""),
-                "main_text": main_text,
-                "secondary_text": secondary_text,
-                "full_text": place_prediction.get("text", {}).get("text", ""),
-                "types": place_prediction.get("types", []),
-            })
+            predictions.append(
+                {
+                    "place_id": place_prediction.get("placeId", ""),
+                    "main_text": main_text,
+                    "secondary_text": secondary_text,
+                    "full_text": place_prediction.get("text", {}).get("text", ""),
+                    "types": place_prediction.get("types", []),
+                }
+            )
 
         return predictions
 
@@ -97,6 +108,7 @@ class GoogleAutocompleteClient:
         headers = {
             "X-Goog-Api-Key": self.api_key,
             "Content-Type": "application/json",
+            "X-Goog-FieldMask": AUTOCOMPLETE_FIELD_MASK,
         }
 
         body = self._build_request_body(

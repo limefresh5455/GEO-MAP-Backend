@@ -17,9 +17,11 @@ class AIChatMessage(Base):
         index=True,
     )
 
-    role = Column(String(20), nullable=False) 
+    role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     token_count = Column(Integer, nullable=True)
     model_used = Column(String(100), nullable=True)
     session = relationship("AIChatSession", back_populates="messages")

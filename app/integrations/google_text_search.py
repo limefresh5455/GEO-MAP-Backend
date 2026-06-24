@@ -8,23 +8,26 @@ from app.exceptions.places import (
     GooglePlacesTimeoutError,
 )
 from app.schemas.discovery import DiscoveryPlaceResult
+
 logger = logging.getLogger(__name__)
 
-TEXT_SEARCH_FIELD_MASK = ",".join([
-    "places.id",
-    "places.displayName",
-    "places.formattedAddress",
-    "places.location",
-    "places.rating",
-    "places.userRatingCount",
-    "places.primaryType",
-    "places.types",
-    "places.businessStatus",
-    "places.googleMapsUri",
-    "places.currentOpeningHours.openNow",
-    "places.priceLevel",                        # Phase 4: Price range
-    "places.photos",                            # Phase 4: Photo thumbnails
-])
+TEXT_SEARCH_FIELD_MASK = ",".join(
+    [
+        "places.id",
+        "places.displayName",
+        "places.formattedAddress",
+        "places.location",
+        "places.rating",
+        "places.userRatingCount",
+        "places.primaryType",
+        "places.types",
+        "places.businessStatus",
+        "places.googleMapsUri",
+        "places.currentOpeningHours.openNow",
+        "places.priceLevel",  # Phase 4: Price range
+        "places.photos",  # Phase 4: Photo thumbnails
+    ]
+)
 
 TEXT_SEARCH_URL = f"{settings.GOOGLE_PLACES_BASE_URL}/places:searchText"
 
@@ -80,7 +83,7 @@ class GoogleTextSearchClient:
         location = raw.get("location", {})
         display_name_obj = raw.get("displayName", {})
         opening_hours = raw.get("currentOpeningHours", {})
-        
+
         # Phase 4: Extract first photo for thumbnail preview
         photos_raw = raw.get("photos", [])
         first_photo_name = None
@@ -88,7 +91,7 @@ class GoogleTextSearchClient:
             first_photo = photos_raw[0]
             if isinstance(first_photo, dict):
                 first_photo_name = first_photo.get("name")
-        
+
         return DiscoveryPlaceResult(
             place_id=raw.get("id"),
             display_name=(
@@ -106,8 +109,8 @@ class GoogleTextSearchClient:
             business_status=raw.get("businessStatus"),
             google_maps_uri=raw.get("googleMapsUri"),
             open_now=opening_hours.get("openNow") if opening_hours else None,
-            price_level=raw.get("priceLevel"),              # Phase 4
-            first_photo_name=first_photo_name,              # Phase 4
+            price_level=raw.get("priceLevel"),  # Phase 4
+            first_photo_name=first_photo_name,  # Phase 4
         )
 
     async def _do_request(self, payload: Dict, headers: Dict) -> httpx.Response:
@@ -115,7 +118,7 @@ class GoogleTextSearchClient:
             return await self._http_client.post(
                 TEXT_SEARCH_URL, json=payload, headers=headers
             )
-        
+
         # B-030 FIX: Log warning for fallback usage
         logger.warning(
             "GoogleTextSearchClient: No shared HTTP client - creating per-request client. "
@@ -149,8 +152,11 @@ class GoogleTextSearchClient:
 
         logger.info(
             "Google Text Search — query: %r, max: %s, bias: (%s, %s) r=%s",
-            text_query, max_result_count,
-            location_bias_lat, location_bias_lon, location_bias_radius,
+            text_query,
+            max_result_count,
+            location_bias_lat,
+            location_bias_lon,
+            location_bias_radius,
         )
 
         try:
@@ -173,7 +179,8 @@ class GoogleTextSearchClient:
             if response.status_code != 200:
                 logger.error(
                     "Google Text Search error %s: %s",
-                    response.status_code, response.text[:500],
+                    response.status_code,
+                    response.text[:500],
                 )
                 raise GooglePlacesAPIError(
                     f"Google Text Search API returned status {response.status_code}"
@@ -183,20 +190,28 @@ class GoogleTextSearchClient:
             places_raw = data.get("places", [])
             logger.info(
                 "Google Text Search returned %d results for query %r",
-                len(places_raw), text_query,
+                len(places_raw),
+                text_query,
             )
             return [self._parse_place(p) for p in places_raw]
 
         except httpx.TimeoutException:
-            logger.error("Google Text Search request timed out for query %r", text_query)
+            logger.error(
+                "Google Text Search request timed out for query %r", text_query
+            )
             raise GooglePlacesTimeoutError()
 
-        except (GooglePlacesAPIError, GooglePlacesRateLimitError, GooglePlacesTimeoutError):
+        except (
+            GooglePlacesAPIError,
+            GooglePlacesRateLimitError,
+            GooglePlacesTimeoutError,
+        ):
             raise
 
         except Exception as exc:
             logger.error(
                 "Unexpected error calling Google Text Search for query %r: %s",
-                text_query, exc,
+                text_query,
+                exc,
             )
             raise GooglePlacesAPIError(str(exc))

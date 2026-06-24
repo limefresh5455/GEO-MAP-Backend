@@ -1,6 +1,12 @@
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float, Index,
-    Integer, String, Text,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    Index,
+    Integer,
+    String,
+    Text,
 )
 from sqlalchemy.sql import func
 
@@ -15,7 +21,7 @@ class SearchQuery(Base):
     user_id = Column(Integer, nullable=False, index=True)
     search_mode = Column(String(10), nullable=False)
     resolved_mode = Column(String(10), nullable=True)
-    raw_query = Column(Text, nullable=True)            # NULL for nearby-only calls
+    raw_query = Column(Text, nullable=True)  # NULL for nearby-only calls
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     radius = Column(Float, nullable=True)
@@ -28,6 +34,4 @@ class SearchQuery(Base):
         index=True,
     )
 
-    __table_args__ = (
-        Index("ix_search_queries_user_created", "user_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_search_queries_user_created", "user_id", "created_at"),)

@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from redis.asyncio import Redis
 
@@ -27,7 +27,9 @@ class RedisRepository:
         lon = round(longitude, 4)
         return f"nearby:{user_id}:{lat}:{lon}:{radius}:{max_result_count}"
 
-    async def get(self, key: str) -> Optional[dict]:
+    async def get(
+        self, key: str
+    ) -> Optional[Any]:  # Returns JSON-decoded value (list, dict, etc.)
         """Retrieve a cached value. Returns None on miss, Redis error, or unavailable."""
         if self.client is None:
             return None

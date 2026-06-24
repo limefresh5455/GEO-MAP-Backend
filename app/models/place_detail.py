@@ -1,6 +1,11 @@
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float,
-    Integer, String, Text,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    Integer,
+    String,
+    Text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
@@ -18,21 +23,22 @@ class PlaceDetail(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     primary_type = Column(String(100), nullable=True)
-    types = Column(JSONB, nullable=True)               # List[str]
+    types = Column(JSONB, nullable=True)  # List[str]
     international_phone_number = Column(String(50), nullable=True)
     national_phone_number = Column(String(50), nullable=True)
     website_uri = Column(Text, nullable=True)
     google_maps_uri = Column(Text, nullable=True)
     rating = Column(Float, nullable=True)
     user_rating_count = Column(Integer, nullable=True)
-    business_status = Column(String(50), nullable=True)   # "OPERATIONAL" etc.
+    business_status = Column(String(50), nullable=True)  # "OPERATIONAL" etc.
     opening_hours = Column(JSONB, nullable=True)
-    open_now = Column(Boolean, nullable=True)              # snapshot at fetch time
-    photos = Column(JSONB, nullable=True)     # List[{name, widthPx, heightPx}]
-    reviews = Column(JSONB, nullable=True)    # List[{text, rating, author, ...}]
-    price_level = Column(String(30), nullable=True)       # "PRICE_LEVEL_MODERATE" etc.
+    open_now = Column(Boolean, nullable=True)  # snapshot at fetch time
+    photos = Column(JSONB, nullable=True)  # List[{name, widthPx, heightPx}]
+    reviews = Column(JSONB, nullable=True)  # List[{text, rating, author, ...}]
+    price_level = Column(String(30), nullable=True)  # "PRICE_LEVEL_MODERATE" etc.
     wheelchair_accessible_entrance = Column(Boolean, nullable=True)
     editorial_summary = Column(Text, nullable=True)
+    extended_data = Column(JSONB, nullable=True)
     last_fetched_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),

@@ -44,10 +44,15 @@ class SearchRepository:
             from_cache=from_cache,  # B21: direct bool, no "true"/"false" string
         )
         self.db.add(record)
-        self.db.flush()   # assigns .id without committing
+        self.db.flush()  # assigns .id without committing
         logger.debug(
             "SearchQuery flushed: id=%s user=%s mode=%s query=%r results=%s cache=%s",
-            record.id, user_id, search_mode, raw_query, result_count, from_cache,
+            record.id,
+            user_id,
+            search_mode,
+            raw_query,
+            result_count,
+            from_cache,
         )
         return record
 

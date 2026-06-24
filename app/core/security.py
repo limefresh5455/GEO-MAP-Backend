@@ -1,54 +1,85 @@
+# app/core/security.py
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-import bcrypt
 from jose import JWTError, jwt
 from app.core.config import settings
 
-_BCRYPT_MAX_BYTES = 72
-_BCRYPT_ROUNDS = 14
-_JWT_AUDIENCE = "geo-map-backend"
-
-DUMMY_HASH: str = bcrypt.hashpw(
-    b"__dummy_constant_time__", 
-    bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)
-).decode("utf-8")
+_ACCESS_AUD = "geo-map-access"
+_REFRESH_AUD = "geo-map-refresh"
 
 
-def _encode(password: str) -> bytes:
-    encoded = password.encode("utf-8")
-    return encoded[:_BCRYPT_MAX_BYTES]
+# ── Access token ──────────────────────────────────────────────────────────────
 
 
-def hash_password(password: str) -> str:
-    hashed = bcrypt.hashpw(_encode(password), bcrypt.gensalt(rounds=_BCRYPT_ROUNDS))
-    return hashed.decode("utf-8")
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(_encode(plain_password), hashed_password.encode("utf-8"))
-
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-
+def create_access_token(
+    data: dict,
+    expires_delta: Optional[timedelta] = None,
+) -> str:
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (
+    now = datetime.now(timezone.utc)
+    expire = now + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-    to_encode.update({
-        "exp": expire,
-        "aud": _JWT_AUDIENCE,  # B-008 FIX
-        "iat": datetime.now(timezone.utc),  # issued at
-    })
+    to_encode.update(
+        {
+            "type": "access",
+            "exp": expire,
+            "iat": now,
+            "aud": _ACCESS_AUD,
+        }
+    )
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
 def decode_access_token(token: str) -> Optional[dict]:
     try:
-        return jwt.decode(
-            token, 
-            settings.SECRET_KEY, 
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM],
-            audience=_JWT_AUDIENCE  # B-008 FIX
+            audience=_ACCESS_AUD,
         )
+        # Reject if type claim is missing or not "access" — prevent
+        # refresh tokens from being used as access tokens.
+        if payload.get("type") != "access":
+            return None
+        return payload
+    except JWTError:
+        return None
+
+
+# ── Refresh token ─────────────────────────────────────────────────────────────
+
+
+def create_refresh_token(
+    data: dict,
+    expires_delta: Optional[timedelta] = None,
+) -> str:
+    to_encode = data.copy()
+    now = datetime.now(timezone.utc)
+    expire = now + (expires_delta or timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+    to_encode.update(
+        {
+            "type": "refresh",
+            "exp": expire,
+            "iat": now,
+            "aud": _REFRESH_AUD,
+        }
+    )
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def decode_refresh_token(token: str) -> Optional[dict]:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+            audience=_REFRESH_AUD,
+        )
+        # Extra guard — reject if someone crafts a token without the type claim
+        if payload.get("type") != "refresh":
+            return None
+        return payload
     except JWTError:
         return None

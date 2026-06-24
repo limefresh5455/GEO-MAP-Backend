@@ -17,7 +17,9 @@ class PlaceQASession(Base):
     user_id = Column(Integer, nullable=False, index=True)
     place_id = Column(String(255), nullable=True, index=True)
     title = Column(String(255), nullable=False, default="New Q&A")
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),

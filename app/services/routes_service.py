@@ -6,8 +6,6 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.exceptions.places import (
     GooglePlacesAPIError,
-    GooglePlacesRateLimitError,
-    GooglePlacesTimeoutError,
     UserLocationNotFoundError,
 )
 from app.integrations.google_routes import GoogleRoutesClient
@@ -43,9 +41,7 @@ def _route_cache_key(
     else:
         lat_str = f"{round(dest_lat, 4)}" if dest_lat else "0"
         lon_str = f"{round(dest_lon, 4)}" if dest_lon else "0"
-        dest_key = hashlib.sha256(
-            f"{lat_str},{lon_str}".encode()
-        ).hexdigest()[:16]
+        dest_key = hashlib.sha256(f"{lat_str},{lon_str}".encode()).hexdigest()[:16]
 
     return f"{_ROUTE_KEY_PREFIX}:{user_id}:{travel_mode}:{dest_key}"
 
@@ -55,23 +51,22 @@ def _matrix_cache_key(
     travel_mode: str,
     destinations: list,
 ) -> str:
-    normalised = sorted([
-        (
-            round(d.get("lat", 0), 4),
-            round(d.get("lon", 0), 4),
-            d.get("place_id", ""),
-        )
-        for d in destinations
-    ])
-    payload_hash = hashlib.sha256(
-        json.dumps(normalised).encode()
-    ).hexdigest()[:16]
+    normalised = sorted(
+        [
+            (
+                round(d.get("lat", 0), 4),
+                round(d.get("lon", 0), 4),
+                d.get("place_id", ""),
+            )
+            for d in destinations
+        ]
+    )
+    payload_hash = hashlib.sha256(json.dumps(normalised).encode()).hexdigest()[:16]
     return f"{_MATRIX_KEY_PREFIX}:{user_id}:{travel_mode}:{payload_hash}"
 
 
 # Human-readable formatting helpers
 def _format_distance(meters: Optional[int]) -> Optional[str]:
-    """Format distance in metres to a human-readable string."""
     if meters is None:
         return None
     if meters < 1000:
@@ -80,7 +75,6 @@ def _format_distance(meters: Optional[int]) -> Optional[str]:
 
 
 def _format_duration(seconds: Optional[int]) -> Optional[str]:
-    """Format duration in seconds to a human-readable string."""
     if seconds is None:
         return None
     minutes = seconds // 60
@@ -88,8 +82,12 @@ def _format_duration(seconds: Optional[int]) -> Optional[str]:
         return f"{minutes} min"
     hours, remaining_min = divmod(minutes, 60)
     if remaining_min == 0:
-        return f"{hours} h"
-    return f"{hours} h {remaining_min} min"
+        return f"{hours} hour" if hours == 1 else f"{hours} hours"
+    return (
+        f"{hours} hour {remaining_min} min"
+        if hours == 1
+        else f"{hours} hours {remaining_min} min"
+    )
 
 
 # Service
@@ -110,7 +108,7 @@ class RoutesService:
         self,
         request: ComputeRouteRequest,
         user_id: int,
-    ) -> Tuple[RouteResponse, int, int]:
+    ) -> Tuple[RouteResponse, float, float]:
 
         # Step 1: Resolve user location from DB (required — no location → 404)
         location = self._location_repo.get_current_location(user_id)
@@ -139,7 +137,7 @@ class RoutesService:
         cached_data = await self._redis.get(cache_key)
         if cached_data:
             try:
-                result = RouteResult.model_validate_json(cached_data)
+                result = RouteResult.model_validate(cached_data)
                 logger.info("Route cache HIT — key: %s", cache_key)
                 return (
                     RouteResponse(
@@ -158,9 +156,7 @@ class RoutesService:
                 )
 
         # Step 3: Call Google Routes API
-        logger.info(
-            "Route cache MISS — calling Routes API for user_id: %s", user_id
-        )
+        logger.info("Route cache MISS — calling Routes API for user_id: %s", user_id)
         result = await self._client.compute_route(
             origin_lat=origin_lat,
             origin_lon=origin_lon,
@@ -182,10 +178,10 @@ class RoutesService:
             avoid_ferries=request.avoid_ferries,
         )
 
-        # Step 4: Write to Redis
+        # Step 4: Write to Redis (B1/B8 FIX: use model_dump() dict, not model_dump_json() string)
         await self._redis.set(
             cache_key,
-            result.model_dump_json(),
+            result.model_dump(mode="json"),
             ttl=settings.REDIS_ROUTES_CACHE_TTL,
         )
 
@@ -207,7 +203,7 @@ class RoutesService:
         request: ComputeRouteMatrixRequest,
         user_id: int,
     ) -> RouteMatrixResponse:
-    
+
         # Step 1: Resolve user location
         location = self._location_repo.get_current_location(user_id)
         if not location:
@@ -228,7 +224,7 @@ class RoutesService:
             try:
                 items = [
                     RouteMatrixItem.model_validate(item)
-                    for item in json.loads(cached_data)
+                    for item in cached_data  # B1 FIX: cached_data is already a list of dicts
                 ]
                 logger.info("Route matrix cache HIT — key: %s", cache_key)
                 return RouteMatrixResponse(
@@ -266,20 +262,22 @@ class RoutesService:
             idx = element.destination_index
             dest = request.destinations[idx] if idx < len(request.destinations) else {}
 
-            items.append(RouteMatrixItem(
-                destination_index=idx,
-                place_id=dest.get("place_id"),
-                distance_meters=element.distance_meters,
-                duration_seconds=element.duration_seconds,
-                distance_text=_format_distance(element.distance_meters),
-                duration_text=_format_duration(element.duration_seconds),
-                reachable=element.condition == "ROUTE_EXISTS",
-            ))
+            items.append(
+                RouteMatrixItem(
+                    destination_index=idx,
+                    place_id=dest.get("place_id"),
+                    distance_meters=element.distance_meters,
+                    duration_seconds=element.duration_seconds,
+                    distance_text=_format_distance(element.distance_meters),
+                    duration_text=_format_duration(element.duration_seconds),
+                    reachable=element.condition == "ROUTE_EXISTS",
+                )
+            )
 
         # Step 5: Write to Redis (short TTL — ETAs change with traffic)
         await self._redis.set(
             cache_key,
-            json.dumps([item.model_dump() for item in items]),
+            [item.model_dump(mode="json") for item in items],
             ttl=settings.REDIS_ROUTE_MATRIX_CACHE_TTL,
         )
 

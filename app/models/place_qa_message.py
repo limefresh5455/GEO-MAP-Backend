@@ -17,10 +17,13 @@ class PlaceQAMessage(Base):
     )
     role = Column(String(20), nullable=False)  # 'user' or 'assistant'
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     token_count = Column(Integer, nullable=True)
     metadata_json = Column(JSONB, nullable=True)
     session = relationship("PlaceQASession", back_populates="messages")
+
     def __repr__(self) -> str:
         return (
             f"<PlaceQAMessage(id={self.id}, session_id={self.session_id!r}, "

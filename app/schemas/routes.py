@@ -3,22 +3,25 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
+
 class TravelMode(str, Enum):
     DRIVE = "DRIVE"
     WALK = "WALK"
     BICYCLE = "BICYCLE"
     TWO_WHEELER = "TWO_WHEELER"
+    TRANSIT = "TRANSIT"
 
 
 class RoutingPreference(str, Enum):
     TRAFFIC_AWARE = "TRAFFIC_AWARE"
-    TRAFFIC_AWARE_OPTIMAL = "TRAFFIC_AWARE_OPTIMAL"   # more compute, more accurate
-    TRAFFIC_UNAWARE = "TRAFFIC_UNAWARE"               # required for WALK / BICYCLE
+    TRAFFIC_AWARE_OPTIMAL = "TRAFFIC_AWARE_OPTIMAL"  # more compute, more accurate
+    TRAFFIC_UNAWARE = "TRAFFIC_UNAWARE"  # required for WALK / BICYCLE
 
 
 # ---------------------------------------------------------------------------
 # Request schemas
 # ---------------------------------------------------------------------------
+
 
 class ComputeRouteRequest(BaseModel):
     # Destination — prefer place_id, fall back to raw coordinates
@@ -85,8 +88,11 @@ class ComputeRouteRequest(BaseModel):
     avoid_ferries: bool = Field(default=False)
 
     def has_valid_destination(self) -> bool:
-        """Returns True if destination is fully specified via coordinates."""
-        return (
+        """
+        Returns True if at least one destination is specified.
+        A destination can be a place_id OR lat/lon coordinates.
+        """
+        return self.place_id is not None or (
             self.destination_latitude is not None
             and self.destination_longitude is not None
         )
@@ -108,21 +114,22 @@ class ComputeRouteMatrixRequest(BaseModel):
 
 class NavigationStep(BaseModel):
     """A single turn-by-turn navigation step."""
+
     distance_meters: int = 0
     duration_seconds: int = 0
-    maneuver: Optional[str] = None          # e.g. "TURN_LEFT", "STRAIGHT"
-    instruction: Optional[str] = None       # human-readable, e.g. "Turn left onto Main St"
+    maneuver: Optional[str] = None  # e.g. "TURN_LEFT", "STRAIGHT"
+    instruction: Optional[str] = None  # human-readable, e.g. "Turn left onto Main St"
 
 
 class RouteResult(BaseModel):
     distance_meters: int
     duration_seconds: int
-    static_duration_seconds: int           # without live traffic
-    traffic_delay_seconds: int = 0         # duration - static_duration
-    distance_text: Optional[str] = None    # "1.2 km"
-    duration_text: Optional[str] = None    # "12 min"
+    static_duration_seconds: int  # without live traffic
+    traffic_delay_seconds: int = 0  # duration - static_duration
+    distance_text: Optional[str] = None  # "1.2 km"
+    duration_text: Optional[str] = None  # "12 min"
     traffic_delay_text: Optional[str] = None  # "4 min delay"
-    encoded_polyline: str                  # Google's encoded polyline format
+    encoded_polyline: str  # Google's encoded polyline format
     steps: List[NavigationStep] = []
     optimized_waypoint_order: Optional[List[int]] = None  # Phase 6: reordered indices
 
@@ -130,15 +137,18 @@ class RouteResult(BaseModel):
 class RouteMatrixElement(BaseModel):
     origin_index: int
     destination_index: int
-    distance_meters: Optional[int] = None   # None when destination is unreachable
+    distance_meters: Optional[int] = None  # None when destination is unreachable
     duration_seconds: Optional[int] = None  # None when destination is unreachable
-    condition: str = "ROUTE_EXISTS"         # "ROUTE_EXISTS" | "ROUTE_NOT_FOUND" | etc.
+    condition: str = "ROUTE_EXISTS"  # "ROUTE_EXISTS" | "ROUTE_NOT_FOUND" | etc.
+
 
 class RouteResponse(BaseModel):
     success: bool
     message: str
     cached: bool = False
     travel_mode: str
+    origin_latitude: Optional[float] = None
+    origin_longitude: Optional[float] = None
     data: Optional[RouteResult] = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -148,8 +158,8 @@ class RouteMatrixItem(BaseModel):
     place_id: Optional[str] = None
     distance_meters: Optional[int] = None
     duration_seconds: Optional[int] = None
-    distance_text: Optional[str] = None    # human-readable, e.g. "1.2 km"
-    duration_text: Optional[str] = None    # human-readable, e.g. "8 min"
+    distance_text: Optional[str] = None  # human-readable, e.g. "1.2 km"
+    duration_text: Optional[str] = None  # human-readable, e.g. "8 min"
     reachable: bool = True
 
 

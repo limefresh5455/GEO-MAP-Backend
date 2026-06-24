@@ -1,9 +1,15 @@
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float, ForeignKey,
-    Integer, String, Text,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
 )
 from sqlalchemy.sql import func
 from app.database.base import Base
+
 
 class PlaceQuestion(Base):
     __tablename__ = "place_questions"

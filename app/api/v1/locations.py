@@ -12,7 +12,9 @@ from app.schemas.location import (
     PaginatedHistoryResponse,
 )
 from app.services.location_service import LocationService
+
 router = APIRouter(prefix="/locations", tags=["Locations"])
+
 
 def _service(db: Session = Depends(get_db)) -> LocationService:
     return LocationService(db)
@@ -38,7 +40,7 @@ def gps_update(
     current_user: User = Depends(get_current_user),
     service: LocationService = Depends(_service),
 ):
-    """    
+    """
     **Request body:**
     ```json
     {
@@ -48,9 +50,9 @@ def gps_update(
     }
     ```
     """
-    location, is_duplicate = service.process_gps_update(current_user.id, payload)
+    location, is_new = service.process_gps_update(current_user.id, payload)
 
-    if is_duplicate:
+    if not is_new:
         return APIResponse(
             success=True,
             message="Location unchanged — duplicate update acknowledged",
@@ -72,7 +74,7 @@ def manual_update(
 ):
     """
     Manually set location.
-    
+
     **Request body:**
     ```json
     {

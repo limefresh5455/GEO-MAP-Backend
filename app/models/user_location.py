@@ -1,6 +1,12 @@
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float,
-    ForeignKey, Integer, String, Text,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -24,9 +30,9 @@ class UserLocation(Base):
     longitude = Column(Float, nullable=False)
 
     # Optional GPS metadata
-    accuracy = Column(Float, nullable=True)   # metres
-    altitude = Column(Float, nullable=True)   # metres above sea level
-    speed = Column(Float, nullable=True)      # metres/second
+    accuracy = Column(Float, nullable=True)  # metres
+    altitude = Column(Float, nullable=True)  # metres above sea level
+    speed = Column(Float, nullable=True)  # metres/second
 
     # Source of update: 'gps' or 'manual'
     source = Column(String(10), nullable=False, default="gps")

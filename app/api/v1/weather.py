@@ -1,11 +1,9 @@
 import logging
 from datetime import date, datetime
-from typing import Optional
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, Request
 from app.dependencies.auth import get_current_user
 from app.dependencies.weather import get_weather_service
-from app.exceptions.custom_exceptions import LocationNotFoundError
+from app.exceptions.places import UserLocationNotFoundError
 from app.models.user import User
 from app.schemas.weather import (
     AirQualityResponse,
@@ -16,12 +14,14 @@ from app.schemas.weather import (
     WeatherRequest,
 )
 from app.services.weather_service import WeatherService
+from app.core.rate_limiter import shared_limiter as limiter
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/weather", tags=["Weather"])
 
 
 def _normalize_dates(request: WeatherRequest) -> tuple[date, date]:
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
     start_date = request.start_date or today
     end_date = request.end_date or start_date
     return start_date, end_date
@@ -38,7 +38,9 @@ def _build_location_data(raw: dict) -> WeatherLocationData:
 
 
 @router.post("/forecast", response_model=WeatherForecastResponse)
+@limiter.limit("10/minute")
 async def get_weather_forecast(
+    request: Request,
     payload: WeatherRequest,
     current_user: User = Depends(get_current_user),
     service: WeatherService = Depends(get_weather_service),
@@ -59,8 +61,10 @@ async def get_weather_forecast(
             start_date=start_date,
             end_date=end_date,
         )
-    except LocationNotFoundError as exc:
-        logger.error("weather_forecast failed — user_id=%s no saved location", current_user.id)
+    except UserLocationNotFoundError:
+        logger.error(
+            "weather_forecast failed — user_id=%s no saved location", current_user.id
+        )
         raise
 
     location = _build_location_data(raw_data)
@@ -78,7 +82,9 @@ async def get_weather_forecast(
 
 
 @router.post("/air-quality", response_model=AirQualityResponse)
+@limiter.limit("10/minute")
 async def get_air_quality(
+    request: Request,
     payload: WeatherRequest,
     current_user: User = Depends(get_current_user),
     service: WeatherService = Depends(get_weather_service),
