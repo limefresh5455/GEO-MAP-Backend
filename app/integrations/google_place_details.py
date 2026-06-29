@@ -297,7 +297,6 @@ class GooglePlaceDetailsClient:
             ]
 
         return PlaceDetailResult(
-            # B15: Always use the requested id as the key, not Google's canonical
             place_id=requested_place_id,
             display_name=(
                 display_name_obj.get("text")
@@ -348,7 +347,6 @@ class GooglePlaceDetailsClient:
     async def get_place_details(self, place_id: str) -> PlaceDetailResult:
         url = f"{self.base_url}/places/{place_id}"
         headers = self._build_headers()
-
         logger.info("Google Place Details fetch — place_id: %s", place_id)
 
         try:
@@ -383,7 +381,6 @@ class GooglePlaceDetailsClient:
                     error_body,
                 )
 
-                # Try to parse the actual Google error message from the response
                 try:
                     error_data = response.json()
                     error_message = error_data.get("error", {}).get(
@@ -396,8 +393,6 @@ class GooglePlaceDetailsClient:
                 except Exception:
                     error_message = error_body
 
-                # If Google says the place doesn't exist ("not found" / "NOT_FOUND"),
-                # raise 404 instead of 502 for a better client experience
                 is_not_found = any(
                     keyword in str(error_message).lower()
                     for keyword in [

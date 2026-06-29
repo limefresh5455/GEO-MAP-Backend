@@ -156,16 +156,12 @@ class SavedPlaceService:
         lon: Optional[float] = None,
         radius_km: float = 2.0,
         filter_by: str = "place",
-    ) -> List[SavedPlaceResponse]:
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Tuple[List[SavedPlaceResponse], int, bool]:
         """
-        Get saved places near a location.
-
-        If lat/lon not provided, falls back to the user's current GPS location.
-        If no location is available, returns empty list.
-
-        Args:
-            filter_by: "place" → filter by the place's own location
-                       "saved" → filter by where the user was when they saved
+        Get saved places near a location with pagination.
+        Returns (items, total_count, has_next).
         """
         if lat is None or lon is None:
             loc = self.location_repo.get_current_location(user_id)
@@ -180,15 +176,18 @@ class SavedPlaceService:
                 logger.warning(
                     "Nearby saved places: no location provided and no user GPS found"
                 )
-                return []
+                return [], 0, False
 
+        offset = (page - 1) * page_size
         if filter_by == "saved":
-            records = self.repo.get_saved_nearby_by_save_location(
-                user_id, lat, lon, radius_km
+            records, total = self.repo.get_saved_nearby_by_save_location(
+                user_id, lat, lon, radius_km, limit=page_size, offset=offset
             )
         else:
-            records = self.repo.get_saved_nearby_by_place_location(
-                user_id, lat, lon, radius_km
+            records, total = self.repo.get_saved_nearby_by_place_location(
+                user_id, lat, lon, radius_km, limit=page_size, offset=offset
             )
 
-        return [SavedPlaceResponse.model_validate(r) for r in records]
+        has_next = (offset + page_size) < total
+        items = [SavedPlaceResponse.model_validate(r) for r in records]
+        return items, total, has_next

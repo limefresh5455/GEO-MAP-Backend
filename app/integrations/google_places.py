@@ -14,8 +14,6 @@ from app.schemas.discovery import DiscoveryPlaceResult
 
 logger = logging.getLogger(__name__)
 
-# Only request the fields we actually use — reduces payload size and billing cost
-# Phase 4: Expanded field mask for richer search result cards
 FIELD_MASK = ",".join(
     [
         "places.id",
@@ -70,14 +68,11 @@ class GooglePlacesClient:
                     "radius": radius,
                 }
             },
-            # B-031 FIX: Add language code as required by Google Places API (New)
             "languageCode": "en",
         }
         if rank_preference:
             payload["rankPreference"] = rank_preference
 
-        # B-032 FIX: Ensure includedTypes is sent as a proper array, not a string
-        # Google API validation fails if this is an empty list or a string
         if included_types:
             # Additional safety: ensure it's actually a list
             if isinstance(included_types, str):
@@ -109,7 +104,6 @@ class GooglePlacesClient:
         display_name = raw.get("displayName", {})
         opening_hours = raw.get("currentOpeningHours", {})
 
-        # Phase 4: Extract first photo for thumbnail preview
         photos_raw = raw.get("photos", [])
         first_photo_name = None
         if photos_raw and isinstance(photos_raw, list) and len(photos_raw) > 0:
@@ -143,7 +137,6 @@ class GooglePlacesClient:
                 NEARBY_SEARCH_URL, json=payload, headers=headers
             )
 
-        # B-030 FIX: Proper async client creation - doesn't block event loop
         logger.warning(
             "GooglePlacesClient: No shared HTTP client - creating per-request client. "
             "This should only happen in tests."
@@ -196,7 +189,6 @@ class GooglePlacesClient:
                 )
 
             if response.status_code != 200:
-                # B-031 FIX: Enhanced error logging for debugging 400 errors
                 error_body = (
                     response.text[:1000] if response.text else "No response body"
                 )

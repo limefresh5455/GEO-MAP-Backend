@@ -72,9 +72,8 @@ class GoogleAutocompleteClient:
         for suggestion in suggestions:
             place_prediction = suggestion.get("placePrediction")
             if not place_prediction:
-                continue  # skip non-place suggestions (e.g. query suggestions)
+                continue
 
-            # Extract structured format for two-line display
             structured = place_prediction.get("structuredFormat", {})
             main_text = structured.get("mainText", {}).get("text", "")
             secondary_text = structured.get("secondaryText", {}).get("text", "")
@@ -91,9 +90,7 @@ class GoogleAutocompleteClient:
 
         return predictions
 
-    # ------------------------------------------------------------------
     # Public API
-    # ------------------------------------------------------------------
 
     async def autocomplete(
         self,
@@ -167,7 +164,6 @@ class GoogleAutocompleteClient:
                     f"Places Autocomplete client error: {exc}"
                 ) from exc
 
-        # Execute with shared or per-call client
         if self._http_client:
             return await _call(self._http_client)
         else:

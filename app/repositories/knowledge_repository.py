@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
-
 from app.models.place_detail import PlaceDetail
 from app.models.place_knowledge_sync import PlaceKnowledgeSync
 
@@ -15,13 +14,11 @@ class KnowledgeRepository:
         self.db = db
 
     def get_place_detail(self, place_id: str) -> Optional[PlaceDetail]:
-        """Return the canonical place record, or None if not yet fetched."""
         return (
             self.db.query(PlaceDetail).filter(PlaceDetail.place_id == place_id).first()
         )
 
     def get_sync_record(self, place_id: str) -> Optional[PlaceKnowledgeSync]:
-        """Return the sync state record for a place, or None if not yet synced."""
         return (
             self.db.query(PlaceKnowledgeSync)
             .filter(PlaceKnowledgeSync.place_id == place_id)
@@ -78,10 +75,6 @@ class KnowledgeRepository:
         return record
 
     def mark_failed(self, place_id: str, error_message: str) -> None:
-        """
-        Mark a sync as failed without changing vector_count or synced_at.
-        Safe to call even if no sync record exists yet.
-        """
         existing = self.get_sync_record(place_id)
         if existing:
             existing.sync_status = "failed"

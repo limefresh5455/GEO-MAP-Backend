@@ -42,11 +42,6 @@ class NearbySearchValidationError(HTTPException):
 
 
 class UserLocationNotFoundError(HTTPException):
-    """
-    Raised when the authenticated user has no saved location in the database.
-    Frontend should prompt the user to update their location first.
-    """
-
     def __init__(self):
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -58,11 +53,6 @@ class UserLocationNotFoundError(HTTPException):
 
 
 class PlaceDetailNotFoundError(HTTPException):
-    """
-    Raised when a place_id is not found in the local database
-    and Google Places API also returns no result.
-    """
-
     def __init__(self, place_id: str):
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,

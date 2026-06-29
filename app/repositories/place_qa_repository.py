@@ -37,7 +37,6 @@ class PlaceQARepository:
         return session
 
     def get_session(self, session_id: str, user_id: int) -> Optional[PlaceQASession]:
-        """Get a single session by ID (with authorization check)."""
         return (
             self.db.query(PlaceQASession)
             .filter(
@@ -53,7 +52,6 @@ class PlaceQARepository:
     def get_session_with_messages(
         self, session_id: str, user_id: int, limit: int = 50, offset: int = 0
     ) -> Optional[PlaceQASession]:
-        """Get session with messages eagerly loaded (with pagination)."""
         session = self.get_session(session_id, user_id)
         if not session:
             return None
@@ -79,10 +77,6 @@ class PlaceQARepository:
         limit: int = 10,
         offset: int = 0,
     ) -> Tuple[List[PlaceQASession], int]:
-        """
-        List user's Place Q&A sessions with filters and sorting.
-        Returns (sessions, total_count).
-        """
         query = self.db.query(PlaceQASession).filter(
             and_(
                 PlaceQASession.user_id == user_id,
@@ -112,7 +106,6 @@ class PlaceQARepository:
         return sessions, total
 
     def update_session_timestamp(self, session: PlaceQASession) -> None:
-        """Update last_message_at timestamp."""
         last_msg = (
             self.db.query(func.max(PlaceQAMessage.created_at))
             .filter(PlaceQAMessage.session_id == session.id)
@@ -122,16 +115,11 @@ class PlaceQARepository:
         self.db.flush()
 
     def delete_session(self, session: PlaceQASession) -> None:
-        """Soft delete session (set is_deleted flag)."""
         session.is_deleted = True
         self.db.flush()
         logger.info("Soft deleted Place Q&A session id=%r", session.id)
 
     def bulk_delete_sessions(self, session_ids: List[str], user_id: int) -> List[str]:
-        """
-        Bulk soft delete sessions.
-        Returns list of successfully deleted session IDs.
-        """
         sessions = (
             self.db.query(PlaceQASession)
             .filter(
@@ -156,15 +144,11 @@ class PlaceQARepository:
     def update_session_title(
         self, session: PlaceQASession, title: str
     ) -> PlaceQASession:
-        """Update session title."""
         session.title = title
         self.db.flush()
         return session
 
-    # ------------------------------------------------------------------
     # Message Operations
-    # ------------------------------------------------------------------
-
     def create_message(
         self,
         *,
@@ -174,7 +158,6 @@ class PlaceQARepository:
         token_count: Optional[int] = None,
         metadata_json: Optional[Dict[str, Any]] = None,
     ) -> PlaceQAMessage:
-        """Create a new message in a session."""
         message = PlaceQAMessage(
             session_id=session_id,
             role=role,
@@ -197,7 +180,6 @@ class PlaceQARepository:
         session_id: str,
         limit: int = 10,
     ) -> List[PlaceQAMessage]:
-        """Get recent messages for a session (for context)."""
         return (
             self.db.query(PlaceQAMessage)
             .filter(PlaceQAMessage.session_id == session_id)
@@ -210,7 +192,6 @@ class PlaceQARepository:
         self,
         session_id: str,
     ) -> int:
-        """Count total messages in a session."""
         return (
             self.db.query(func.count(PlaceQAMessage.id))
             .filter(PlaceQAMessage.session_id == session_id)
@@ -218,7 +199,6 @@ class PlaceQARepository:
         ) or 0
 
     def get_last_message_preview(self, session_id: str) -> Optional[str]:
-        """Get the last message content for preview."""
         last_msg = (
             self.db.query(PlaceQAMessage.content)
             .filter(PlaceQAMessage.session_id == session_id)
@@ -228,7 +208,6 @@ class PlaceQARepository:
         return last_msg[0] if last_msg else None
 
     def count_user_sessions(self, user_id: int) -> int:
-        """Count total active sessions for a user."""
         return (
             self.db.query(func.count(PlaceQASession.id))
             .filter(
@@ -254,10 +233,6 @@ class PlaceQARepository:
         pinecone_matches: int,
         session_id: Optional[str] = None,
     ) -> PlaceQuestion:
-        """
-        Insert an audit row for the question submission.
-        Flushed (not committed) so .id is available for the answer log FK.
-        """
         record = PlaceQuestion(
             user_id=user_id,
             place_id=place_id,
@@ -293,10 +268,6 @@ class PlaceQARepository:
         latency_ms: Optional[int],
         session_id: Optional[str] = None,
     ) -> PlaceAnswerLog:
-        """
-        Insert the answer audit record.
-        Flushed (not committed) — caller commits when ready.
-        """
         record = PlaceAnswerLog(
             question_id=question_id,
             user_id=user_id,
@@ -328,7 +299,6 @@ class PlaceQARepository:
     def get_recent_questions_for_place(
         self, place_id: str, limit: int = 10
     ) -> List[PlaceQuestion]:
-        """Return the N most recent questions for a specific place."""
         return (
             self.db.query(PlaceQuestion)
             .filter(PlaceQuestion.place_id == place_id)

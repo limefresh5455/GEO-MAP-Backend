@@ -6,6 +6,7 @@ Revision ID: 20260625000001
 Revises: 20260625000000
 Create Date: 2026-06-25 01:00:00.000000
 """
+
 from typing import Sequence, Union
 
 from alembic import op

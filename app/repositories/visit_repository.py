@@ -3,7 +3,6 @@ from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
-
 from app.models.place_visit_log import PlaceVisitLog
 
 logger = logging.getLogger(__name__)
@@ -33,6 +32,7 @@ class VisitRepository:
         place_id: str,
         display_name: Optional[str] = None,
         formatted_address: Optional[str] = None,
+        primary_type: Optional[str] = None,
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
         rating_given: Optional[float] = None,
@@ -45,6 +45,7 @@ class VisitRepository:
             place_id=place_id,
             display_name=display_name,
             formatted_address=formatted_address,
+            primary_type=primary_type,
             latitude=latitude,
             longitude=longitude,
             rating_given=rating_given,
@@ -105,8 +106,47 @@ class VisitRepository:
         )
         return records, total
 
+    def get_latest_visits_by_place_ids(
+        self, user_id: int, place_ids: List[str]
+    ) -> List[PlaceVisitLog]:
+        """
+        Batch-fetch the most recent visit per place for multiple place_ids.
+        Uses a subquery to get the latest visit_id per place, then fetches full rows.
+        """
+        if not place_ids:
+            return []
+
+        # Subquery: latest visit_id per place_id
+        from sqlalchemy import func as sa_func
+
+        latest = (
+            self.db.query(
+                PlaceVisitLog.place_id,
+                sa_func.max(PlaceVisitLog.id).label("max_id"),
+            )
+            .filter(
+                and_(
+                    PlaceVisitLog.user_id == user_id,
+                    PlaceVisitLog.place_id.in_(place_ids),
+                )
+            )
+            .group_by(PlaceVisitLog.place_id)
+            .subquery()
+        )
+
+        return (
+            self.db.query(PlaceVisitLog)
+            .join(
+                latest,
+                and_(
+                    PlaceVisitLog.id == latest.c.max_id,
+                    PlaceVisitLog.place_id == latest.c.place_id,
+                ),
+            )
+            .all()
+        )
+
     def get_stats(self, user_id: int) -> Dict:
-        """Aggregate stats about a user's visits."""
         total = (
             self.db.query(func.count(PlaceVisitLog.id))
             .filter(PlaceVisitLog.user_id == user_id)

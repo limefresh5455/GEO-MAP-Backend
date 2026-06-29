@@ -1,8 +1,8 @@
 import logging
 from typing import List, Optional
 
+from sqlalchemy import insert as sql_insert
 from sqlalchemy.orm import Session
-
 from app.models.search_query import SearchQuery
 from app.models.search_result import SearchResult
 from app.schemas.discovery import DiscoveryPlaceResult
@@ -15,9 +15,7 @@ class SearchRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    # ------------------------------------------------------------------
     # search_queries
-    # ------------------------------------------------------------------
 
     def create_search_query(
         self,
@@ -41,7 +39,7 @@ class SearchRepository:
             longitude=longitude,
             radius=radius,
             result_count=result_count,
-            from_cache=from_cache,  # B21: direct bool, no "true"/"false" string
+            from_cache=from_cache,
         )
         self.db.add(record)
         self.db.flush()  # assigns .id without committing
@@ -56,9 +54,7 @@ class SearchRepository:
         )
         return record
 
-    # ------------------------------------------------------------------
     # search_results
-    # ------------------------------------------------------------------
 
     def create_search_results(
         self,
@@ -67,35 +63,34 @@ class SearchRepository:
         user_id: int,
         places: List[DiscoveryPlaceResult],
     ) -> List[SearchResult]:
-        rows: List[SearchResult] = []
+        mappings = []
         for position, place in enumerate(places):
-            row = SearchResult(
-                query_id=query_id,
-                user_id=user_id,
-                place_id=place.place_id or "",
-                display_name=place.display_name,
-                formatted_address=place.formatted_address,
-                primary_type=place.primary_type,
-                latitude=place.latitude,
-                longitude=place.longitude,
-                rating=place.rating,
-                user_rating_count=place.user_rating_count,
-                business_status=place.business_status,
-                rank_position=position,
+            mappings.append(
+                {
+                    "query_id": query_id,
+                    "user_id": user_id,
+                    "place_id": place.place_id or "",
+                    "display_name": place.display_name,
+                    "formatted_address": place.formatted_address,
+                    "primary_type": place.primary_type,
+                    "latitude": place.latitude,
+                    "longitude": place.longitude,
+                    "rating": place.rating,
+                    "user_rating_count": place.user_rating_count,
+                    "business_status": place.business_status,
+                    "rank_position": position,
+                }
             )
-            self.db.add(row)
-            rows.append(row)
 
-        if rows:
+        if mappings:
+            self.db.execute(sql_insert(SearchResult), mappings)
             self.db.flush()
-            logger.debug(
-                "SearchResults flushed: query_id=%s count=%s", query_id, len(rows)
-            )
-        return rows
+            # Return inserted data directly from memory instead of re-fetching
+            # with a SELECT query. The mappings already have all fields we need.
+            return [SearchResult(**m) for m in mappings]
+        return []
 
-    # ------------------------------------------------------------------
     # Reads (analytics / future use)
-    # ------------------------------------------------------------------
 
     def get_recent_queries_for_user(
         self, user_id: int, limit: int = 10

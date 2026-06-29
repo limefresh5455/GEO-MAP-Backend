@@ -12,9 +12,7 @@ class AIChatRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    # ------------------------------
     # Sessions
-    # ------------------------------
 
     def create_session(self, *, user_id: int, title: str = "New Chat") -> AIChatSession:
         session = AIChatSession(user_id=user_id, title=title)
@@ -62,14 +60,12 @@ class AIChatRepository:
         session.is_archived = True
         self.db.flush()
 
-    # ------------------------------
     # Messages
-    # ------------------------------
 
     def add_message(
         self,
         *,
-        session_id: str,  # UUID string (was int)
+        session_id: str,
         role: str,
         content: str,
         token_count: Optional[int] = None,
@@ -98,7 +94,7 @@ class AIChatRepository:
             .limit(limit)
             .all()
         )
-        return messages[::-1]  # reverse to chronological order
+        return messages[::-1]
 
     def count_session_messages(self, *, session_id: str) -> int:
         """Count total messages in a session."""

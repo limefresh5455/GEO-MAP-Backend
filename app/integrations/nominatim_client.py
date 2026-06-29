@@ -7,17 +7,14 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
-# 1.1 second delay to respect the 1 req/sec free-tier policy
 _INTER_REQUEST_DELAY = 1.1
 _USER_AGENT = "GeoMapBackend/3.0 (place-enrichment; contact@geomap.app)"
 
 
 class NominatimClient:
-    """Fetch geographic context from OpenStreetMap / Nominatim."""
 
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None) -> None:
         self._http_client = http_client
-        self._timeout = httpx.Timeout(connect=5.0, read=10.0, write=3.0, pool=5.0)
         self._last_call_time: float = 0.0
 
     async def _rate_limit(self) -> None:
@@ -37,16 +34,19 @@ class NominatimClient:
         if self._http_client is not None:
             return await self._http_client.get(url, params=params, headers=headers)
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        # Fallback: should only happen in tests
+        logger.warning(
+            "NominatimClient: no shared HTTP client — creating per-call client. "
+            "Inject http_nominatim from app.state for production use."
+        )
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=10.0, write=3.0, pool=5.0)
+        ) as client:
             return await client.get(url, params=params, headers=headers)
 
     async def reverse_geocode(
         self, latitude: float, longitude: float
     ) -> Optional[Dict[str, Any]]:
-        """
-        Reverse geocode coordinates to get address details, including
-        neighbourhood, suburb, city, state, country, and OSM tags.
-        """
         params = {
             "lat": str(latitude),
             "lon": str(longitude),
@@ -105,7 +105,12 @@ class NominatimClient:
                     )
                 },
             }
-        except Exception as exc:
+        except (
+            httpx.RequestError,
+            httpx.TimeoutException,
+            json.JSONDecodeError,
+            ValueError,
+        ) as exc:
             logger.warning(
                 "Nominatim reverse geocode failed for (%s, %s): %s",
                 latitude,
@@ -115,10 +120,6 @@ class NominatimClient:
             return None
 
     async def search_place(self, query: str, limit: int = 3) -> List[Dict[str, Any]]:
-        """
-        Free-form search for a place by name.
-        Useful for finding OSM data about landmarks, POIs, etc.
-        """
         params = {
             "q": query,
             "format": "jsonv2",
@@ -159,6 +160,11 @@ class NominatimClient:
                     }
                 )
             return enriched
-        except Exception as exc:
+        except (
+            httpx.RequestError,
+            httpx.TimeoutException,
+            json.JSONDecodeError,
+            ValueError,
+        ) as exc:
             logger.warning("Nominatim search failed for %r: %s", query, exc)
             return []

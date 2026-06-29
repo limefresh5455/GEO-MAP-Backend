@@ -20,7 +20,7 @@ STATIC_DIR = UI_DIR / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
-# Serve the API Tester page 
+# Serve the API Tester page
 
 
 @router.get("", response_class=HTMLResponse, include_in_schema=False)

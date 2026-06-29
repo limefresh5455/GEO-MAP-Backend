@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     GOOGLE_PLACES_API_KEY: str
     GOOGLE_PLACES_BASE_URL: str = "https://places.googleapis.com/v1"
 
-    # Google Routes API (shares the same API key as Places)
+    # Google Routes API
     GOOGLE_ROUTES_BASE_URL: str = "https://routes.googleapis.com/directions/v2"
     REDIS_ROUTES_CACHE_TTL: int = 300
     REDIS_ROUTE_MATRIX_CACHE_TTL: int = 120
@@ -33,19 +33,19 @@ class Settings(BaseSettings):
     # OpenAI
     OPENAI_API_KEY: str
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
-    OPENAI_CHAT_MODEL: str = "gpt-4o-mini"  # used by Place Q&A (Phase 4)
-    OPENAI_MAX_CONTEXT_TOKENS: int = 3000  # token budget for RAG context
+    OPENAI_CHAT_MODEL: str = "gpt-4o-mini"
+    OPENAI_MAX_CONTEXT_TOKENS: int = 3000
 
     # Place Q&A Session Limits
-    MAX_SESSIONS_PER_USER: int = 100  # Maximum active sessions per user
-    MAX_SESSION_AGE_DAYS: int = 90  # Auto-archive sessions older than this
+    MAX_SESSIONS_PER_USER: int = 100
+    MAX_SESSION_AGE_DAYS: int = 90
 
     # Pinecone
     PINECONE_API_KEY: str
     PINECONE_INDEX_NAME: str = "geo-map-places"
-    PINECONE_ENVIRONMENT: str = ""  # e.g. "us-east-1-aws" for serverless
+    PINECONE_ENVIRONMENT: str = ""
 
-    # ── SMTP (local custom auth — email OTP) ─────────────────────
+    # SMTP
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
@@ -53,10 +53,12 @@ class Settings(BaseSettings):
     SMTP_FROM_NAME: str = "GeoMap"
     SMTP_FROM_EMAIL: str = ""
 
-    # OTP settings
-    OTP_EXPIRE_SECONDS: int = 120  # 2 minutes
-    OTP_MAX_ATTEMPTS: int = 5
+    # SMTP settings: TLS toggle
+    SMTP_USE_TLS: bool = True
 
+    # OTP settings
+    OTP_EXPIRE_SECONDS: int = 300  # 5 minutes
+    OTP_MAX_ATTEMPTS: int = 5
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -72,6 +74,10 @@ class Settings(BaseSettings):
     def validate_required_secret(cls, v: str, info) -> str:
         if not v or not v.strip():
             raise ValueError(f"{info.field_name} must not be empty")
+        if info.field_name == "SECRET_KEY" and len(v.strip()) < 32:
+            raise ValueError(
+                f"SECRET_KEY must be at least 32 characters long (got {len(v.strip())})"
+            )
         return v
 
     @field_validator("DATABASE_URL")

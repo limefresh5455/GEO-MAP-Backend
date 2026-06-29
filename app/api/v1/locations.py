@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 from app.database.connection import get_db
 from app.dependencies.auth import get_current_user
@@ -41,14 +41,8 @@ def gps_update(
     service: LocationService = Depends(_service),
 ):
     """
-    **Request body:**
-    ```json
-    {
-      "latitude": 28.6304,
-      "longitude": 77.2177,
-      "accuracy": 10.0
-    }
-    ```
+    Update the user's current location using GPS coordinates.
+    Provide latitude, longitude, and optional accuracy.
     """
     location, is_new = service.process_gps_update(current_user.id, payload)
 
@@ -72,18 +66,6 @@ def manual_update(
     current_user: User = Depends(get_current_user),
     service: LocationService = Depends(_service),
 ):
-    """
-    Manually set location.
-
-    **Request body:**
-    ```json
-    {
-      "latitude": 28.6304,
-      "longitude": 77.2177,
-      "label": "Home"
-    }
-    ```
-    """
     location = service.process_manual_update(current_user.id, payload)
     return APIResponse(
         success=True,
@@ -140,4 +122,17 @@ def delete_current_location(
     return APIResponse(
         success=True,
         message="Current location deactivated",
+    )
+
+
+@router.delete("/history/{history_id}", response_model=APIResponse)
+def delete_history_entry(
+    history_id: int = Path(..., ge=1, description="ID of the history entry to delete"),
+    current_user: User = Depends(get_current_user),
+    service: LocationService = Depends(_service),
+):
+    service.delete_history_record(current_user.id, history_id)
+    return APIResponse(
+        success=True,
+        message=f"Location history entry {history_id} deleted successfully",
     )

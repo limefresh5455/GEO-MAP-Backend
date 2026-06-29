@@ -1,6 +1,7 @@
 import logging
 import uuid
 from typing import Optional
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
@@ -25,20 +26,7 @@ async def chat_message(
     payload: AIChatStartRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> AIChatResponse:
-    """
-    **Example — new session (omit session_id or send null/empty):**
-    ```json
-    { "query": "Plan a 2-day trip to Jaipur" }
-    ```
-    ```json
-    { "query": "Plan a 2-day trip to Jaipur", "session_id": null }
-    ```
-    **Example — continue existing session:**
-    ```json
-    { "query": "What about hotels?", "session_id": "3f2a1b4c-8e9d-4a2b-b1c3-d4e5f6a7b8c9" }
-    ```
-    """
+):
     # Step 1: Resolve session_id — header takes priority over body
     session_id: Optional[str] = payload.session_id
     session_id_header = request.headers.get("X-Chat-Session-Id")

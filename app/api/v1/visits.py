@@ -1,6 +1,6 @@
 import logging
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy.orm import Session
 from app.core.rate_limiter import shared_limiter as limiter
 from app.database.connection import get_db

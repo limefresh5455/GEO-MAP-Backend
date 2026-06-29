@@ -3,7 +3,6 @@ from typing import List, Optional, Tuple
 
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
-
 from app.models.user_saved_place import UserSavedPlace
 
 logger = logging.getLogger(__name__)
@@ -21,6 +20,21 @@ class SavedPlaceRepository:
                 and_(
                     UserSavedPlace.id == saved_id,
                     UserSavedPlace.user_id == user_id,
+                )
+            )
+            .first()
+        )
+
+    def get_saved_by_place_id(
+        self, user_id: int, place_id: str
+    ) -> Optional[UserSavedPlace]:
+        return (
+            self.db.query(UserSavedPlace)
+            .filter(
+                and_(
+                    UserSavedPlace.user_id == user_id,
+                    UserSavedPlace.place_id == place_id,
+                    UserSavedPlace.is_archived == False,
                 )
             )
             .first()
@@ -129,6 +143,24 @@ class SavedPlaceRepository:
         )
         return records, total
 
+    def get_saved_by_place_ids(
+        self, user_id: int, place_ids: List[str]
+    ) -> List[UserSavedPlace]:
+        """Batch-fetch saved places for multiple place_ids at once."""
+        if not place_ids:
+            return []
+        return (
+            self.db.query(UserSavedPlace)
+            .filter(
+                and_(
+                    UserSavedPlace.user_id == user_id,
+                    UserSavedPlace.place_id.in_(place_ids),
+                    UserSavedPlace.is_archived == False,
+                )
+            )
+            .all()
+        )
+
     def count_by_user(self, user_id: int) -> int:
         """Count total saved places for a user."""
         return (
@@ -143,45 +175,69 @@ class SavedPlaceRepository:
         ) or 0
 
     def get_saved_nearby_by_place_location(
-        self, user_id: int, lat: float, lon: float, radius_km: float = 2.0
-    ) -> List[UserSavedPlace]:
-        """Find saved places where the PLACE's location is within the radius."""
+        self,
+        user_id: int,
+        lat: float,
+        lon: float,
+        radius_km: float = 2.0,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Tuple[List[UserSavedPlace], int]:
+        """Find saved places where the PLACE's location is within the radius.
+        Returns (records, total_count).
+        """
         deg = radius_km / 111.0
-        return (
-            self.db.query(UserSavedPlace)
-            .filter(
-                and_(
-                    UserSavedPlace.user_id == user_id,
-                    UserSavedPlace.is_archived == False,
-                    UserSavedPlace.latitude.isnot(None),
-                    UserSavedPlace.longitude.isnot(None),
-                    UserSavedPlace.latitude >= lat - deg,
-                    UserSavedPlace.latitude <= lat + deg,
-                    UserSavedPlace.longitude >= lon - deg,
-                    UserSavedPlace.longitude <= lon + deg,
-                )
+        base_query = self.db.query(UserSavedPlace).filter(
+            and_(
+                UserSavedPlace.user_id == user_id,
+                UserSavedPlace.is_archived == False,
+                UserSavedPlace.latitude.isnot(None),
+                UserSavedPlace.longitude.isnot(None),
+                UserSavedPlace.latitude >= lat - deg,
+                UserSavedPlace.latitude <= lat + deg,
+                UserSavedPlace.longitude >= lon - deg,
+                UserSavedPlace.longitude <= lon + deg,
             )
+        )
+        total = base_query.count()
+        records = (
+            base_query.order_by(UserSavedPlace.saved_at.desc())
+            .limit(limit)
+            .offset(offset)
             .all()
         )
+        return records, total
 
     def get_saved_nearby_by_save_location(
-        self, user_id: int, lat: float, lon: float, radius_km: float = 2.0
-    ) -> List[UserSavedPlace]:
-        """Find saved places where the USER was when they saved (save context)."""
+        self,
+        user_id: int,
+        lat: float,
+        lon: float,
+        radius_km: float = 2.0,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Tuple[List[UserSavedPlace], int]:
+        """Find saved places where the USER was when they saved (save context).
+        Returns (records, total_count).
+        """
         deg = radius_km / 111.0
-        return (
-            self.db.query(UserSavedPlace)
-            .filter(
-                and_(
-                    UserSavedPlace.user_id == user_id,
-                    UserSavedPlace.is_archived == False,
-                    UserSavedPlace.saved_location_lat.isnot(None),
-                    UserSavedPlace.saved_location_lon.isnot(None),
-                    UserSavedPlace.saved_location_lat >= lat - deg,
-                    UserSavedPlace.saved_location_lat <= lat + deg,
-                    UserSavedPlace.saved_location_lon >= lon - deg,
-                    UserSavedPlace.saved_location_lon <= lon + deg,
-                )
+        base_query = self.db.query(UserSavedPlace).filter(
+            and_(
+                UserSavedPlace.user_id == user_id,
+                UserSavedPlace.is_archived == False,
+                UserSavedPlace.saved_location_lat.isnot(None),
+                UserSavedPlace.saved_location_lon.isnot(None),
+                UserSavedPlace.saved_location_lat >= lat - deg,
+                UserSavedPlace.saved_location_lat <= lat + deg,
+                UserSavedPlace.saved_location_lon >= lon - deg,
+                UserSavedPlace.saved_location_lon <= lon + deg,
             )
+        )
+        total = base_query.count()
+        records = (
+            base_query.order_by(UserSavedPlace.saved_at.desc())
+            .limit(limit)
+            .offset(offset)
             .all()
         )
+        return records, total

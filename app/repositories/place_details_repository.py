@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
-
 from app.models.place_detail import PlaceDetail
 from app.schemas.place_details import PlaceDetailResult
 
@@ -29,7 +28,6 @@ def _compute_content_hash(detail: PlaceDetailResult) -> str:
         str(detail.wheelchair_accessible_entrance or ""),
         str(detail.editorial_summary or ""),
         str(detail.extended_data or ""),
-        # Stringify nested JSONB-bound fields for comparison
         str(detail.opening_hours.model_dump() if detail.opening_hours else ""),
         str([r.model_dump() for r in detail.reviews] if detail.reviews else ""),
     ]
@@ -50,30 +48,28 @@ def _to_dict(obj: Any) -> Any:
 
 
 def _rehydrate_opening_hours(data: Optional[Dict]) -> Optional[Any]:
-    """Silently returns None on any deserialisation error."""
     if not data:
         return None
     try:
         from app.schemas.place_details import (
             OpeningHours,
-        )  # local import avoids circular
+        )
 
         return OpeningHours(**data)
-    except Exception:
+    except (ValueError, TypeError, KeyError):
         return None
 
 
 def _rehydrate_reviews(data: Optional[list]) -> Optional[list]:
-    """Silently returns None on any deserialisation error."""
     if not data:
         return None
     try:
         from app.schemas.place_details import (
             PlaceReview,
-        )  # local import avoids circular
+        )
 
         return [PlaceReview(**r) for r in data]
-    except Exception:
+    except (ValueError, TypeError, KeyError):
         return None
 
 
@@ -81,12 +77,9 @@ class PlaceDetailsRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    # ------------------------------------------------------------------
     # Reads
-    # ------------------------------------------------------------------
 
     def get_by_place_id(self, place_id: str) -> Optional[PlaceDetail]:
-        """Return the stored record for a place_id, or None if absent."""
         return (
             self.db.query(PlaceDetail).filter(PlaceDetail.place_id == place_id).first()
         )
@@ -99,8 +92,13 @@ class PlaceDetailsRepository:
         )
         return updated > 0
 
-    def _apply_detail_to_record(self, record: PlaceDetail, detail: PlaceDetailResult, content_changed: bool, now_utc: datetime) -> None:
-        """Apply PlaceDetailResult fields to an existing PlaceDetail record."""
+    def _apply_detail_to_record(
+        self,
+        record: PlaceDetail,
+        detail: PlaceDetailResult,
+        content_changed: bool,
+        now_utc: datetime,
+    ) -> None:
         record.display_name = detail.display_name
         record.formatted_address = detail.formatted_address
         record.latitude = detail.latitude
@@ -128,7 +126,6 @@ class PlaceDetailsRepository:
             record.knowledge_synced = False
 
     def _compute_hash_for_record(self, record: PlaceDetail) -> str:
-        """Compute content hash from an existing DB record for comparison."""
         return _compute_content_hash(
             PlaceDetailResult(
                 place_id=record.place_id,
@@ -155,7 +152,7 @@ class PlaceDetailsRepository:
     def upsert(self, detail: PlaceDetailResult) -> PlaceDetail:
         existing = self.get_by_place_id(detail.place_id)
 
-        types_list = detail.types  # already a plain list[str] or None
+        types_list = detail.types
 
         now_utc = datetime.now(timezone.utc)
 
@@ -164,7 +161,6 @@ class PlaceDetailsRepository:
             existing_content_hash = self._compute_hash_for_record(existing)
             content_changed = new_content_hash != existing_content_hash
 
-            # Update in place — upsert semantics
             self._apply_detail_to_record(existing, detail, content_changed, now_utc)
 
             if content_changed:

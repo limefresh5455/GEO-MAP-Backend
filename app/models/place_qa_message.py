@@ -15,7 +15,7 @@ class PlaceQAMessage(Base):
         nullable=False,
         index=True,
     )
-    role = Column(String(20), nullable=False)  # 'user' or 'assistant'
+    role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

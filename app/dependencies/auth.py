@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core.auth_utils import validate_token_sub
 from app.core.security import decode_access_token
 from app.database.connection import get_db
 from app.models.user import User
@@ -48,9 +49,8 @@ async def get_current_user(
     if not user_id_str:
         raise credentials_exception
 
-    try:
-        user_id = int(user_id_str)
-    except (ValueError, TypeError):
+    user_id = validate_token_sub(user_id_str)
+    if user_id is None:
         raise credentials_exception
 
     # Load from PostgreSQL
@@ -64,6 +64,21 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive. Please contact support.",
         )
+
+    # Password-changed-at check — invalidates all tokens issued before the
+    # last password change or reset. Ensures that a stolen token cannot be
+    # used after the user has changed their password.
+    if user.password_changed_at is not None:
+        token_iat = payload.get("iat")
+        if token_iat is not None:
+            # token_iat is a Unix timestamp (int), password_changed_at is a datetime
+            changed_at_ts = user.password_changed_at.timestamp()
+            if token_iat < changed_at_ts:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token has been revoked due to password change. Please log in again.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
     return user
 

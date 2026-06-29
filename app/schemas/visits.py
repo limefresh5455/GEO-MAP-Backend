@@ -9,7 +9,10 @@ class LogVisitRequest(BaseModel):
     """Request body for POST /places/{place_id}/visit."""
 
     rating_given: Optional[float] = Field(
-        None, ge=1, le=5, description="Personal rating 1-5 (accepts whole numbers or decimals)"
+        None,
+        ge=1,
+        le=5,
+        description="Personal rating 1-5 (accepts whole numbers or decimals)",
     )
     review_text: Optional[str] = Field(None, max_length=2000)
     with_whom: Optional[str] = Field(

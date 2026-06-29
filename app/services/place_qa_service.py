@@ -5,7 +5,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 import tiktoken
 from sqlalchemy.orm import Session
 from app.core.config import settings
-from app.exceptions.custom_exceptions import BadRequestError
+from app.exceptions.custom_exceptions import BadRequestError, NotFoundError
 from app.exceptions.places import PlaceDetailNotFoundError
 from app.integrations.openai_client import OpenAIEmbeddingClient
 from app.integrations.pinecone_client import PineconeClient
@@ -26,49 +26,41 @@ logger = logging.getLogger(__name__)
 
 _SIMILARITY_THRESHOLD = 0.30
 
-_SYSTEM_PROMPT_TEMPLATE = """ROLE: You are a knowledgeable local place-discovery assistant for the GeoMap platform. Your purpose is to answer questions about places using the detailed PLACE CONTEXT provided below. You are given rich structured data about the place including its name, address, contact info, ratings, hours, amenities, services, reviews, and optionally Wikipedia summaries and geographic context.
+_SYSTEM_PROMPT_TEMPLATE = """You are a helpful local place-discovery assistant. Answer questions about places using the PLACE CONTEXT provided below.
 
-LANGUAGE
-Always respond in English, regardless of the language used in the question.
-
-ANSWER STYLE
-1. **Be helpful and confident.** Use the PLACE CONTEXT to give the most complete answer you can.
-2. **Structure your answer naturally:** Start with a direct answer, then add relevant context from the data.
-3. **For questions about a specific feature** (hours, price, parking, etc.): Give the answer directly with the exact value if available. Example: "Yes, they're open until 10 PM on weekdays." or "They accept credit cards and mobile payments."
-4. **For general questions** ("Tell me about this place"): Provide a well-organized overview covering the key details: what it is, where it is, rating, price level, hours, and notable features.
-5. **When you have rich data** (ratings, reviews, amenities): Offer a comprehensive answer. Mention the rating, what people say in reviews, and notable amenities.
-6. **Use formatting for readability:**
-   - Short paragraphs (2-3 sentences) for prose answers
-   - Bullet points only when listing multiple items (amenities, services, features)
-   - Bold key numbers (ratings, prices, times) for emphasis
-
-CONFIDENCE LABELING
-- If the information is explicitly in the PLACE CONTEXT: State it directly.
-- If the information can be reasonably inferred from the place type and available data (e.g., a "restaurant" likely serves food, but don't specify the cuisine unless stated): Be slightly less definite. Say "Based on the available information, it appears that..." or "As a typical [place type], it likely..."
-- If the information is **not** in the PLACE CONTEXT: Say "I don't have that specific information about this place." Do NOT make up details.
-
-EXAMPLES OF GOOD ANSWERS
-- "Yes, The Grand Cafe is open today until 10 PM. They have a 4.2-star rating from 230 reviews and are moderately priced."
-- "The restaurant offers dine-in and takeout, accepts credit cards, and has outdoor seating. They serve lunch and dinner, including beer and wine."
-- "This park is located at 123 Main Street with a 4.5-star rating. Visitors mention it's great for families and has nice walking trails. I don't have specific information about parking availability."
-
-EXAMPLES OF WHAT TO AVOID
-- ❌ "The place probably has good food." (speculative)
-- ❌ "I don't have that information" when the data clearly contains it (too restrictive)
-- ❌ Long, rambling paragraphs that repeat the same information
-
-HALLUCINATION PREVENTION (internal guidelines — do not output)
-- Every fact must be traceable to the PLACE CONTEXT below.
-- If information is ambiguous, acknowledge the uncertainty.
-- Never make up phone numbers, addresses, hours, or prices.
+Rules:
+- Respond in English.
+- Start with a direct answer, then add relevant context.
+- If asked about a specific feature (hours, price, parking), give the exact value if available.
+- If the information is explicitly in the PLACE CONTEXT, state it directly.
+- If information is not in the PLACE CONTEXT, say you don't have that specific information. Do not make up details.
+- Use short paragraphs and bullet points only when listing multiple items.
+- Keep answers concise.
 
 PLACE CONTEXT
 {context_block}
 
-Answer the user's question in English using the information above.
+Answer the user's question using the information above.
 """
 
-_ENCODER = tiktoken.encoding_for_model("gpt-4o-mini")
+# Lazy tiktoken encoder — avoids crashing the module at import time if
+# tiktoken has network issues or the model name changes.
+_ENCODER = None
+
+
+def _get_encoder():
+    global _ENCODER
+    if _ENCODER is None:
+        try:
+            _ENCODER = tiktoken.encoding_for_model("gpt-4o-mini")
+        except Exception as exc:
+            logger.warning(
+                "Failed to initialize tiktoken encoder for gpt-4o-mini: %s. "
+                "Falling back to approximate token counting.",
+                exc,
+            )
+            _ENCODER = None  # sentinel — will retry on next call
+    return _ENCODER
 
 
 def _build_structured_facts_block(place) -> str:
@@ -241,11 +233,24 @@ def _compute_confidence(scores: List[float]) -> Optional[float]:
 
 
 def _estimate_tokens(text: str) -> int:
-    return max(1, len(_ENCODER.encode(text)))
+    encoder = _get_encoder()
+    if encoder is not None:
+        try:
+            return max(1, len(encoder.encode(text)))
+        except Exception:
+            pass
+    # Fallback: approximate by chars / 4 (roughly 4 chars per token)
+    return max(1, len(text) // 4 + 1)
 
 
 class PlaceQAService:
     CHAT_COST = 5
+    _PLACE_CACHE_TTL = 300  # 5 minutes
+    _PLACE_CACHE_MAX_SIZE = 200  # prevent memory leak
+    # Class-level cache shared across all request instances.
+    # Async Python is single-threaded, so dict access is safe.
+    # Key: place_id -> (place_detail_obj, cached_at_timestamp)
+    _place_cache: Dict[str, tuple] = {}
 
     def __init__(
         self,
@@ -258,6 +263,41 @@ class PlaceQAService:
         self.pinecone_client = pinecone_client
         self.knowledge_repo = KnowledgeRepository(db)
         self.qa_repo = PlaceQARepository(db)
+
+    # ── Caching Helper ────────────────────────────────────────────────────
+
+    def _get_cached_place(self, place_id: str):
+        """
+        Return place detail from a short-lived in-memory cache, falling back
+        to the database on a cache miss or expiry.
+
+        Uses a class-level cache so place details persist across requests
+        within the same server process (up to the TTL).
+
+        NOTE: We re-attach the ORM object to the current session via
+        self.db.add() to avoid DetachedInstanceError when accessing
+        attributes that have been expired by a previous commit or
+        when the original session has been closed.
+        """
+        now = time.time()
+        cached = PlaceQAService._place_cache.get(place_id)
+        if cached is not None:
+            place, cached_at = cached
+            if now - cached_at < self._PLACE_CACHE_TTL:
+                # Re-attach detached ORM object to the current session
+                # so lazy-loaded attributes work correctly.
+                self.db.add(place)
+                return place
+
+        # Cache miss or expired — fetch from DB
+        place = self.knowledge_repo.get_place_detail(place_id)
+        if place is not None:
+            PlaceQAService._place_cache[place_id] = (place, now)
+            # Evict oldest entries if cache is too large
+            if len(PlaceQAService._place_cache) > self._PLACE_CACHE_MAX_SIZE:
+                oldest_key = next(iter(PlaceQAService._place_cache))
+                del PlaceQAService._place_cache[oldest_key]
+        return place
 
     # Session Management
     def _generate_title_from_question(self, question: str) -> str:
@@ -310,7 +350,7 @@ class PlaceQAService:
         for session in sessions:
             place_info = None
             if session.place_id:
-                place_detail = self.knowledge_repo.get_place_detail(session.place_id)
+                place_detail = self._get_cached_place(session.place_id)
                 if place_detail:
                     place_info = PlaceInfo(
                         place_id=session.place_id,
@@ -371,8 +411,6 @@ class PlaceQAService:
         """Soft delete a session. Returns the deleted session_id."""
         session = self.qa_repo.get_session(session_id=session_id, user_id=user_id)
         if not session:
-            from app.exceptions.custom_exceptions import NotFoundError
-
             raise NotFoundError(f"Session {session_id} not found or access denied")
 
         self.qa_repo.delete_session(session)
@@ -399,8 +437,6 @@ class PlaceQAService:
         """Update session metadata (e.g. rename title, archive)."""
         session = self.qa_repo.get_session(session_id=session_id, user_id=user_id)
         if not session:
-            from app.exceptions.custom_exceptions import NotFoundError
-
             raise NotFoundError(f"Session {session_id} not found or access denied")
 
         if title:
@@ -465,7 +501,17 @@ class PlaceQAService:
                 place_id,
                 session_id,
                 exc,
+                extra={
+                    "metric": "placeqa.audit_failure",
+                    "user_id": user_id,
+                    "place_id": place_id,
+                    "session_id": session_id,
+                    "error": str(exc),
+                },
             )
+            # Track failure count via log-based metric — monitor logs for
+            # sudden increases in placeqa.audit_failure which may indicate
+            # a systemic issue with the audit pipeline.
             self.db.rollback()
 
     # ------------------------------------------------------------------
@@ -519,8 +565,8 @@ class PlaceQAService:
                 )
 
         if not session:
-            total_sessions = self.qa_repo.count_user_sessions(user_id)
-            if total_sessions >= settings.MAX_SESSIONS_PER_USER:
+            current_count = self.qa_repo.count_user_sessions(user_id)
+            if current_count >= settings.MAX_SESSIONS_PER_USER:
                 raise BadRequestError(
                     f"Maximum session limit ({settings.MAX_SESSIONS_PER_USER}) reached. "
                     "Please delete old sessions before creating new ones."
@@ -535,8 +581,8 @@ class PlaceQAService:
             is_new_session = True
             logger.info("Created new session %s — title: %s", session.id, title)
 
-        # Step 2 — Load place from DB
-        place = self.knowledge_repo.get_place_detail(place_id)
+        # Step 2 — Load place from DB (cached)
+        place = self._get_cached_place(place_id)
         if place is None:
             logger.warning(
                 "PlaceQA blocked — place_id %s not in DB. "
@@ -823,8 +869,8 @@ class PlaceQAService:
                 )
 
         if not sess:
-            total_sessions = self.qa_repo.count_user_sessions(user_id)
-            if total_sessions >= settings.MAX_SESSIONS_PER_USER:
+            current_count = self.qa_repo.count_user_sessions(user_id)
+            if current_count >= settings.MAX_SESSIONS_PER_USER:
                 raise BadRequestError(
                     f"Maximum session limit ({settings.MAX_SESSIONS_PER_USER}) reached. "
                     "Please delete old sessions before creating new ones."
@@ -849,8 +895,8 @@ class PlaceQAService:
             }
         )
 
-        # Step 2 — Load place from DB
-        place = self.knowledge_repo.get_place_detail(place_id)
+        # Step 2 — Load place from DB (cached)
+        place = self._get_cached_place(place_id)
         if place is None:
             logger.warning(
                 "PlaceQA stream blocked — place_id %s not in DB",

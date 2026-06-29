@@ -13,7 +13,25 @@ from app.services.credit_service import CreditService
 
 logger = logging.getLogger(__name__)
 
-_ENCODER = tiktoken.encoding_for_model("gpt-4o-mini")
+# Lazy tiktoken encoder — avoids crashing the module at import time if
+# tiktoken has network issues or the model name changes.
+_ENCODER = None
+
+
+def _get_encoder():
+    global _ENCODER
+    if _ENCODER is None:
+        try:
+            _ENCODER = tiktoken.encoding_for_model("gpt-4o-mini")
+        except Exception as exc:
+            logger.warning(
+                "Failed to initialize tiktoken encoder for gpt-4o-mini: %s. "
+                "Falling back to approximate token counting.",
+                exc,
+            )
+            _ENCODER = None
+    return _ENCODER
+
 
 _SYSTEM_PROMPT = """You are a professional travel assistant.
 
@@ -82,7 +100,14 @@ Never
 
 
 def _estimate_tokens(text: str) -> int:
-    return max(1, len(_ENCODER.encode(text)))
+    encoder = _get_encoder()
+    if encoder is not None:
+        try:
+            return max(1, len(encoder.encode(text)))
+        except Exception:
+            pass
+    # Fallback: approximate by chars / 4 (roughly 4 chars per token)
+    return max(1, len(text) // 4 + 1)
 
 
 class AIChatService:
@@ -140,10 +165,8 @@ class AIChatService:
 
         # No session_id provided → create a fresh session
         if session is None:
-            if (
-                self.repo.count_user_sessions(user_id=user_id)
-                >= settings.MAX_SESSIONS_PER_USER
-            ):
+            current_count = self.repo.count_user_sessions(user_id=user_id)
+            if current_count >= settings.MAX_SESSIONS_PER_USER:
                 from app.exceptions.custom_exceptions import BadRequestError
 
                 raise BadRequestError(
@@ -174,14 +197,17 @@ class AIChatService:
         # Build message list for OpenAI
         messages = self._build_messages_for_openai(history, user_query=query)
 
-        # Enforce token budget — trim oldest history if needed
+        # Enforce token budget — trim oldest history until under budget (O(n) with running total)
         max_tokens = settings.OPENAI_MAX_CONTEXT_TOKENS
-        while (
-            sum(_estimate_tokens(m["content"]) for m in messages) > max_tokens
-            and len(history) > 0
-        ):
+        system_tokens = _estimate_tokens(_SYSTEM_PROMPT)
+        query_tokens = _estimate_tokens(query)
+        history_tokens = [_estimate_tokens(m.content) for m in history]
+        total_tokens = system_tokens + sum(history_tokens) + query_tokens
+        while total_tokens > max_tokens and history_tokens:
+            removed = history_tokens.pop(0)  # remove oldest history entry's tokens
+            total_tokens -= removed
             history = history[1:]
-            messages = self._build_messages_for_openai(history, user_query=query)
+        messages = self._build_messages_for_openai(history, user_query=query)
 
         answer = await self.openai_client.get_chat_completion(
             messages=messages,
@@ -273,10 +299,8 @@ class AIChatService:
             raise NotFoundError(f"Chat session '{session_id}' not found")
 
         if session is None:
-            if (
-                self.repo.count_user_sessions(user_id=user_id)
-                >= settings.MAX_SESSIONS_PER_USER
-            ):
+            current_count = self.repo.count_user_sessions(user_id=user_id)
+            if current_count >= settings.MAX_SESSIONS_PER_USER:
                 from app.exceptions.custom_exceptions import BadRequestError
 
                 raise BadRequestError(
@@ -313,14 +337,18 @@ class AIChatService:
 
         messages = self._build_messages_for_openai(history, user_query=query)
 
-        # Enforce token budget
+        # Enforce token budget — trim oldest history until under budget
         max_tokens = settings.OPENAI_MAX_CONTEXT_TOKENS
+        history_tokens = [_estimate_tokens(m.content) for m in history]
+        system_tokens = _estimate_tokens(_SYSTEM_PROMPT)
+        query_tokens = _estimate_tokens(query)
         while (
-            sum(_estimate_tokens(m["content"]) for m in messages) > max_tokens
-            and len(history) > 0
+            system_tokens + sum(history_tokens) + query_tokens > max_tokens
+            and len(history_tokens) > 0
         ):
+            history_tokens.pop(0)
             history = history[1:]
-            messages = self._build_messages_for_openai(history, user_query=query)
+        messages = self._build_messages_for_openai(history, user_query=query)
 
         # Stream from OpenAI
         full_answer_parts: List[str] = []

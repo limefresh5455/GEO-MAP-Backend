@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, Request
 from app.dependencies.auth import get_current_user
 from app.dependencies.weather import get_weather_service

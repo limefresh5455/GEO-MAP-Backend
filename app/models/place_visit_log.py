@@ -1,7 +1,5 @@
 from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text
-
 from sqlalchemy.sql import func
-
 from app.database.base import Base
 
 
@@ -19,11 +17,16 @@ class PlaceVisitLog(Base):
     # Denormalized place fields for fast listing
     display_name = Column(String(500), nullable=True)
     formatted_address = Column(Text, nullable=True)
+    primary_type = Column(String(100), nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
 
     # User's personal rating and review (supports decimals like 4.5)
-    rating_given = Column(Float, nullable=True, comment="User's personal rating 1-5 (supports decimal values)")
+    rating_given = Column(
+        Float,
+        nullable=True,
+        comment="User's personal rating 1-5 (supports decimal values)",
+    )
     review_text = Column(Text, nullable=True, comment="User's personal notes/review")
     with_whom = Column(
         String(100),

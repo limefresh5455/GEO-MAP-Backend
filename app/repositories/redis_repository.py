@@ -3,6 +3,7 @@ import logging
 from typing import Any, Optional
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from app.core.config import settings
 
@@ -27,9 +28,7 @@ class RedisRepository:
         lon = round(longitude, 4)
         return f"nearby:{user_id}:{lat}:{lon}:{radius}:{max_result_count}"
 
-    async def get(
-        self, key: str
-    ) -> Optional[Any]:  # Returns JSON-decoded value (list, dict, etc.)
+    async def get(self, key: str) -> Optional[Any]:
         """Retrieve a cached value. Returns None on miss, Redis error, or unavailable."""
         if self.client is None:
             return None
@@ -40,12 +39,12 @@ class RedisRepository:
                 return None
             logger.info("Cache HIT: %s", key)
             return json.loads(raw)
-        except Exception as exc:
+        except (RedisError, json.JSONDecodeError) as exc:
             logger.error("Redis GET error for key '%s': %s", key, exc)
             return None
 
-    async def set(self, key: str, value: dict, ttl: Optional[int] = None) -> bool:
-        """Serialise and store a value with TTL. Returns True on success."""
+    async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
+        """Serialise and store a value with TTL. Accepts any JSON-serialisable value. Returns True on success."""
         if self.client is None:
             return False
         try:
@@ -53,7 +52,7 @@ class RedisRepository:
             await self.client.setex(key, expiry, json.dumps(value))
             logger.info("Cache SET: %s (TTL: %ss)", key, expiry)
             return True
-        except Exception as exc:
+        except (RedisError, TypeError, ValueError) as exc:
             logger.error("Redis SET error for key '%s': %s", key, exc)
             return False
 
@@ -64,7 +63,7 @@ class RedisRepository:
         try:
             result = await self.client.delete(key)
             return result > 0
-        except Exception as exc:
+        except RedisError as exc:
             logger.error("Redis DELETE error for key '%s': %s", key, exc)
             return False
 
@@ -74,7 +73,7 @@ class RedisRepository:
             return False
         try:
             return bool(await self.client.exists(key))
-        except Exception as exc:
+        except RedisError as exc:
             logger.error("Redis EXISTS error for key '%s': %s", key, exc)
             return False
 
@@ -84,6 +83,6 @@ class RedisRepository:
             return -2
         try:
             return await self.client.ttl(key)
-        except Exception as exc:
+        except RedisError as exc:
             logger.error("Redis TTL error for key '%s': %s", key, exc)
             return -2

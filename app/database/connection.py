@@ -8,9 +8,16 @@ engine = create_engine(
     pool_size=10,
     max_overflow=20,
     pool_recycle=3600,
+    pool_timeout=30,
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+    expire_on_commit=False,  # Prevents DetachedInstanceError: keeps ORM attributes
+    # accessible after commit() so cached objects don't break on attribute access.
+)
 
 
 def get_db():

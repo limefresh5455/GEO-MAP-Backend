@@ -25,17 +25,6 @@ async def text_search(
     current_user: User = Depends(get_current_user),
     service: DiscoveryService = Depends(get_discovery_service),
 ) -> TextSearchResponse:
-    """
-    **Request body:**
-    ```json
-    {
-      "text_query": "best coffee near me",
-      "max_result_count": 20
-    }
-    ```
-
-    Results cached for 60 minutes.
-    """
     logger.info(
         "Text Search — user_id: %s, query: %r, max: %s",
         current_user.id,
@@ -62,9 +51,7 @@ async def text_search(
     )
 
 
-# ---------------------------------------------------------------------------
 # 2. Nearby Search — Explore around user's saved location
-# ---------------------------------------------------------------------------
 
 
 @router.post("/nearby", response_model=NearbyDiscoveryResponse)
@@ -73,32 +60,6 @@ async def nearby_search(
     current_user: User = Depends(get_current_user),
     service: DiscoveryService = Depends(get_discovery_service),
 ) -> NearbyDiscoveryResponse:
-    """
-    **Request body - Using preset:**
-    ```json
-    {
-      "radius": 5000,
-      "preset": "preferred_types"
-    }
-    ```
-
-    **Request body - Custom types:**
-    ```json
-    {
-      "radius": 3000,
-      "included_types": ["restaurant", "cafe"]
-    }
-    ```
-
-    **Available presets:**
-    - `preferred_types`: Everyday places (restaurants, cafes, hospitals, shopping, temples)
-    - `famous_places`: Tourist attractions, landmarks, museums, parks
-
-    **Default:** If no preset or types specified, uses `preferred_types`
-
-    User must save location first. Results cached for 60 minutes.
-    """
-
     logger.info(
         "Nearby Discovery — user_id: %s, radius: %sm, max: %s, preset: %s",
         current_user.id,
@@ -125,11 +86,7 @@ async def nearby_search(
     )
 
 
-# ---------------------------------------------------------------------------
 # 3. Autocomplete (Phase 2 — Search UX)
-# ---------------------------------------------------------------------------
-
-
 @router.get("/autocomplete", response_model=AutocompleteResponse)
 async def autocomplete(
     input: str = Query(..., min_length=1, max_length=200),
@@ -145,7 +102,6 @@ async def autocomplete(
         input,
     )
 
-    # Parse comma-separated types into a list
     types_list = None
     if included_primary_types:
         types_list = [t.strip() for t in included_primary_types.split(",") if t.strip()]
@@ -158,7 +114,6 @@ async def autocomplete(
         use_user_location_bias=use_user_location_bias,
     )
 
-    # Convert raw dicts to Pydantic models
     predictions = [AutocompletePrediction(**p) for p in predictions_raw]
 
     source_msg = "from cache" if from_cache else "from Google"

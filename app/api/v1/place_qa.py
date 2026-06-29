@@ -1,6 +1,7 @@
 import logging
-from typing import List
+
 from fastapi import APIRouter, Depends, Path, Query, Request
+
 from app.core.rate_limiter import shared_limiter as limiter
 from app.dependencies.auth import get_current_user
 from app.dependencies.place_qa import get_place_qa_service
@@ -34,34 +35,13 @@ async def ask_place_question(
     payload: PlaceQuestionRequest = ...,
     current_user: User = Depends(get_current_user),
     service: PlaceQAService = Depends(get_place_qa_service),
-) -> PlaceQuestionResponse:
-    """
-    **New session (no session_id):**
-    ```json
-    { "question": "Is this place open on Sunday?" }
-    ```
-
-    **Continue existing session:**
-    ```json
-    { "question": "What about parking?", "session_id": "3f2a1b4c-8e9d-4a2b-b1c3-d4e5f6a7b8c9" }
-    ```
-
-    **Response includes:**
-    - `session_id` — UUID to use for follow-up questions
-    - `answer` — AI-generated answer
-    - `is_new_session` — true on first question
-    - `title` — auto-generated title (new sessions only)
-
-    Rate limit: 20/min | Cost: 5 credits per question
-    """
+):
     logger.info(
         "Ask question — user: %s, place: %s, session: %s",
         current_user.id,
         place_id,
         payload.session_id,
     )
-
-    # BUG 4 FIX: No longer passing `db` as a parameter — service uses self.db
     return await service.answer_question(
         place_id=place_id,
         request=payload,
@@ -134,10 +114,10 @@ async def get_place_qa_session(
     if not session:
         raise NotFoundError(f"Session {session_id} not found")
 
-    # Get place info (place detail lookup stays in router for GET endpoint only)
+    # Get place info using the service's cached method (prevents DetachedInstanceError)
     place_info = None
     if session.place_id:
-        place_detail = service.knowledge_repo.get_place_detail(session.place_id)
+        place_detail = service._get_cached_place(session.place_id)
         if place_detail:
             place_info = PlaceInfo(
                 place_id=session.place_id,

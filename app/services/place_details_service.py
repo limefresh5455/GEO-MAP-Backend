@@ -2,6 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
+from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 from app.integrations.google_place_details import GooglePlaceDetailsClient
 from app.repositories.place_details_repository import PlaceDetailsRepository
@@ -144,20 +145,27 @@ class PlaceDetailsService:
 
     async def _acquire_lock(self, place_id: str) -> bool:
         if self.redis_repo.client is None:
-            return True
+            # Redis unavailable — return False so callers wait briefly and
+            # re-check cache, rather than letting all concurrent requests
+            # through at once (which would defeat stampede protection).
+            logger.debug(
+                "Lock acquire skipped for %s — Redis unavailable, returning False",
+                place_id,
+            )
+            return False
         try:
             key = _lock_key(place_id)
             acquired = await self.redis_repo.client.set(
                 key, "1", nx=True, ex=_LOCK_TTL_SECONDS
             )
             return bool(acquired)
-        except Exception as exc:
+        except (RedisError, ConnectionError, OSError) as exc:
             logger.warning(
-                "Lock acquire failed for %s: %s — proceeding without lock",
+                "Lock acquire failed for %s: %s — returning False, will retry cache",
                 place_id,
                 exc,
             )
-            return True
+            return False
 
     async def _release_lock(self, place_id: str) -> None:
         if self.redis_repo.client is None:
@@ -169,11 +177,18 @@ class PlaceDetailsService:
 
     # ── Background knowledge sync (Pinecone vectors for Place Q&A) ───────
 
+    # Bounded executor: limit concurrent background sync tasks to prevent
+    # unbounded memory growth under high request load.
+    _bg_sync_semaphore = asyncio.Semaphore(5)
+
     async def _trigger_background_knowledge_sync(self, place_id: str) -> None:
         """
         Automatically create Pinecone vectors after fetching place details.
         Runs as a fire-and-forget background task so the API response is not
         blocked by embedding + Pinecone upload.
+
+        Uses a class-level Semaphore (max 5 concurrent) to prevent unbounded
+        task creation under high concurrent request load.
         """
         if self.knowledge_service is None:
             logger.debug(
@@ -183,48 +198,60 @@ class PlaceDetailsService:
             )
             return
 
-        async def _sync_task():
-            try:
-                from app.schemas.knowledge import KnowledgeSyncRequest
-                from app.database.connection import SessionLocal
-                from app.services.knowledge_service import KnowledgeService
+        # If the semaphore is full, skip this sync rather than queueing
+        # indefinitely. The detail will be synced anyway on the next fetch
+        # or when the user explicitly triggers it.
+        if self._bg_sync_semaphore.locked():
+            logger.warning(
+                "Background knowledge sync throttled — too many concurrent "
+                "syncs (place_id: %s). Skipping.",
+                place_id,
+            )
+            return
 
-                task_db = SessionLocal()
+        async def _sync_task():
+            async with self.__class__._bg_sync_semaphore:
                 try:
-                    logger.info(
-                        "Background knowledge sync started — place_id: %s",
+                    from app.schemas.knowledge import KnowledgeSyncRequest
+                    from app.database.connection import SessionLocal
+                    from app.services.knowledge_service import KnowledgeService
+
+                    task_db = SessionLocal()
+                    try:
+                        logger.info(
+                            "Background knowledge sync started — place_id: %s",
+                            place_id,
+                        )
+                        task_knowledge_service = KnowledgeService(
+                            db=task_db,
+                            openai_client=self.knowledge_service.openai_client,
+                            pinecone_client=self.knowledge_service.pinecone_client,
+                        )
+                        result = await task_knowledge_service.sync_place_knowledge(
+                            place_id=place_id,
+                            request=KnowledgeSyncRequest(force_resync=False),
+                        )
+                        if result.skipped:
+                            logger.info(
+                                "Background knowledge sync skipped "
+                                "(already up-to-date) — place_id: %s",
+                                place_id,
+                            )
+                        else:
+                            logger.info(
+                                "Background knowledge sync completed — "
+                                "place_id: %s, vectors: %d",
+                                place_id,
+                                result.vector_count or 0,
+                            )
+                    finally:
+                        task_db.close()
+                except Exception as exc:
+                    logger.warning(
+                        "Background knowledge sync failed for place_id %s: %s",
                         place_id,
+                        exc,
                     )
-                    task_knowledge_service = KnowledgeService(
-                        db=task_db,
-                        openai_client=self.knowledge_service.openai_client,
-                        pinecone_client=self.knowledge_service.pinecone_client,
-                    )
-                    result = await task_knowledge_service.sync_place_knowledge(
-                        place_id=place_id,
-                        request=KnowledgeSyncRequest(force_resync=False),
-                    )
-                    if result.skipped:
-                        logger.info(
-                            "Background knowledge sync skipped "
-                            "(already up-to-date) — place_id: %s",
-                            place_id,
-                        )
-                    else:
-                        logger.info(
-                            "Background knowledge sync completed — "
-                            "place_id: %s, vectors: %d",
-                            place_id,
-                            result.vector_count or 0,
-                        )
-                finally:
-                    task_db.close()
-            except Exception as exc:
-                logger.warning(
-                    "Background knowledge sync failed for place_id %s: %s",
-                    place_id,
-                    exc,
-                )
 
         asyncio.create_task(_sync_task())
         logger.debug("Background knowledge sync task created — place_id: %s", place_id)

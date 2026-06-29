@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
@@ -34,9 +35,7 @@ class PineconeClient:
         self._index = None
         self._index_name = settings.PINECONE_INDEX_NAME
 
-    # ------------------------------------------------------------------
     # Lifecycle: call once at startup
-    # ------------------------------------------------------------------
 
     async def initialise(self) -> None:
         logger.info("Initialising Pinecone client — index: %s", self._index_name)
@@ -44,7 +43,7 @@ class PineconeClient:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(_executor, self._sync_initialise)
             logger.info("Pinecone client ready — index: %s", self._index_name)
-        except Exception as exc:
+        except (ValueError, TypeError, RuntimeError) as exc:
             logger.error("Pinecone initialisation failed: %s", exc)
             raise PineconeError(f"Pinecone initialisation failed: {exc}")
 
@@ -71,9 +70,7 @@ class PineconeClient:
 
         self._index = self._pc.Index(self._index_name)
 
-    # ------------------------------------------------------------------
     # Internal: lazy fallback (handles direct instantiation in tests)
-    # ------------------------------------------------------------------
 
     async def _get_index(self):
         if self._index is not None:
@@ -84,8 +81,6 @@ class PineconeClient:
             "performing async fallback init. "
             "Ensure initialise() is called in the FastAPI lifespan."
         )
-        # BUG FIX: Run fallback init in thread executor to avoid blocking
-        # the async event loop (Pinecone init involves network I/O).
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(_executor, self._sync_initialise)
         return self._index
@@ -94,17 +89,13 @@ class PineconeClient:
         """One namespace per place for zero-cost scoped retrieval."""
         return f"place_{place_id}"
 
-    # ------------------------------------------------------------------
     # Internal: sync helpers (run in executor)
-    # ------------------------------------------------------------------
 
     def _sync_get_index(self):
         """Synchronous index accessor — called from thread pool."""
         if self._index is not None:
             return self._index
-        # Fallback init should not happen in production because initialise()
-        # is called during the FastAPI lifespan. This path only runs in tests
-        # or if initialise() was never called.
+
         self._sync_initialise()
         return self._index
 
@@ -161,9 +152,7 @@ class PineconeClient:
             },
         }
 
-    # ------------------------------------------------------------------
     # Public async interface
-    # ------------------------------------------------------------------
 
     async def upsert_vectors(
         self,
@@ -192,7 +181,7 @@ class PineconeClient:
             return count
         except PineconeError:
             raise
-        except Exception as exc:
+        except (ValueError, TypeError, RuntimeError) as exc:
             logger.error("Pinecone upsert failed for place_id %s: %s", place_id, exc)
             raise PineconeError(f"Pinecone upsert failed: {exc}")
 
@@ -212,7 +201,6 @@ class PineconeClient:
             top_k,
         )
         try:
-            # B03 FIX: asyncio.get_running_loop() instead of get_event_loop()
             loop = asyncio.get_running_loop()
             matches = await loop.run_in_executor(
                 _executor,
@@ -228,7 +216,12 @@ class PineconeClient:
             return matches
         except PineconeError:
             raise
-        except Exception as exc:
+        except (
+            ValueError,
+            TypeError,
+            RuntimeError,
+            concurrent.futures.TimeoutError,
+        ) as exc:
             logger.error("Pinecone query failed for place_id %s: %s", place_id, exc)
             raise PineconeError(f"Pinecone query failed: {exc}")
 
@@ -240,13 +233,18 @@ class PineconeClient:
             namespace,
         )
         try:
-            # B03 FIX: asyncio.get_running_loop() instead of get_event_loop()
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(
                 _executor,
                 lambda: self._sync_delete_namespace(namespace),
             )
-        except Exception as exc:
+        except (
+            ValueError,
+            TypeError,
+            RuntimeError,
+            OSError,
+            concurrent.futures.TimeoutError,
+        ) as exc:
             # Non-fatal — log and continue; worst case is stale vectors
             logger.warning(
                 "Pinecone namespace delete failed for place_id %s: %s",
@@ -265,6 +263,12 @@ class PineconeClient:
                 self._sync_describe_index_stats,
             )
             return stats.get("namespaces", {}).get(namespace, 0)
-        except Exception as exc:
+        except (
+            ValueError,
+            TypeError,
+            RuntimeError,
+            OSError,
+            concurrent.futures.TimeoutError,
+        ) as exc:
             logger.warning("Pinecone stats failed for place_id %s: %s", place_id, exc)
             return 0

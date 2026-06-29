@@ -52,9 +52,7 @@ class GoogleRoutesClient:
         self._http_client = http_client
         self._timeout = httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0)
 
-    # ------------------------------------------------------------------
     # Internal helpers
-    # ------------------------------------------------------------------
 
     def _build_headers(self, field_mask: str) -> Dict[str, str]:
         return {
@@ -118,9 +116,7 @@ class GoogleRoutesClient:
 
         return response.json()
 
-    # ------------------------------------------------------------------
     # Public API
-    # ------------------------------------------------------------------
 
     async def compute_route(
         self,

@@ -16,7 +16,6 @@ from app.database.base import Base
 class UserLocation(Base):
 
     __tablename__ = "user_locations"
-
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(
         Integer,

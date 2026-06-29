@@ -1,6 +1,6 @@
 from datetime import date
 from typing import Any, Dict, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class WeatherRequest(BaseModel):
@@ -13,13 +13,15 @@ class WeatherRequest(BaseModel):
         description="End date for forecast/air quality data in YYYY-MM-DD format.",
     )
 
-    @field_validator("end_date")
-    @classmethod
-    def validate_end_date(cls, value: Optional[date], info):
-        start_date = info.data.get("start_date")
-        if value is not None and start_date is not None and value < start_date:
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if (
+            self.end_date is not None
+            and self.start_date is not None
+            and self.end_date < self.start_date
+        ):
             raise ValueError("end_date cannot be before start_date")
-        return value
+        return self
 
 
 class WeatherLocationData(BaseModel):

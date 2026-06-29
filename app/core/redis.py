@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Optional
 import redis.asyncio as aioredis
+from redis.exceptions import RedisError
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ async def initialise_redis() -> None:
                 settings.REDIS_HOST,
                 settings.REDIS_PORT,
             )
-        except Exception as exc:
+        except RedisError as exc:
             logger.warning(
                 "Redis unavailable at startup (%s:%s) — running without cache. "
                 "All search and detail requests will hit Google directly. "

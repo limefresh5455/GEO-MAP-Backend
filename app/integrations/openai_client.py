@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 
 # Maximum texts per single embeddings.create() call
 _BATCH_LIMIT = 100
-# Retry settings for transient failures
 _MAX_RETRIES = 3
 _BASE_RETRY_DELAY = 0.5
 
@@ -35,7 +34,6 @@ class EmbeddingRateLimitError(HTTPException):
 
 
 class ChatCompletionError(HTTPException):
-    """Raised when the OpenAI Chat Completions API returns an error."""
 
     def __init__(self, detail: str = "Chat completion failed"):
         super().__init__(
@@ -45,18 +43,11 @@ class ChatCompletionError(HTTPException):
 
 
 class OpenAIEmbeddingClient:
-    """
-    Generates text embeddings via the OpenAI API.
-    Stateless — safe to instantiate once per dependency-injection cycle.
-    """
-
     def __init__(self) -> None:
         self.model = settings.OPENAI_EMBEDDING_MODEL
         self._client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-    # ------------------------------------------------------------------
     # Embeddings
-    # ------------------------------------------------------------------
 
     async def embed_texts(self, texts: List[str]) -> List[List[float]]:
         if not texts:
@@ -137,7 +128,7 @@ class OpenAIEmbeddingClient:
                     except RateLimitError:
                         logger.warning("OpenAI rate limit hit during embedding retry")
                         raise EmbeddingRateLimitError()
-            except Exception as exc:
+            except (ValueError, TypeError, RuntimeError) as exc:
                 logger.error("Unexpected error during embedding: %s", exc)
                 raise EmbeddingError(str(exc))
 
@@ -147,9 +138,7 @@ class OpenAIEmbeddingClient:
         results = await self.embed_texts([text])
         return results[0]
 
-    # ------------------------------------------------------------------
     # Non-streaming chat completions (kept for HTTP endpoints)
-    # ------------------------------------------------------------------
 
     async def chat_completion(
         self,
@@ -207,7 +196,7 @@ class OpenAIEmbeddingClient:
                 )
                 await asyncio.sleep(delay)
 
-            except Exception as exc:
+            except (ValueError, TypeError, RuntimeError) as exc:
                 logger.error("Unexpected error during chat completion: %s", exc)
                 raise ChatCompletionError(str(exc))
 
@@ -267,13 +256,11 @@ class OpenAIEmbeddingClient:
                 )
                 await asyncio.sleep(delay)
 
-            except Exception as exc:
+            except (ValueError, TypeError, RuntimeError) as exc:
                 logger.error("Unexpected error during chat with history: %s", exc)
                 raise ChatCompletionError(str(exc))
 
-    # ------------------------------------------------------------------
     # Streaming chat completions (for WebSocket delivery)
-    # ------------------------------------------------------------------
 
     async def stream_chat_completion(
         self,
@@ -282,11 +269,6 @@ class OpenAIEmbeddingClient:
         temperature: float = 0.2,
         max_tokens: int = 800,
     ) -> AsyncGenerator[str, None]:
-        """
-        Stream a chat completion token-by-token.
-        Yields content tokens as they arrive from OpenAI.
-        Used for place Q&A streaming via WebSocket.
-        """
         model = settings.OPENAI_CHAT_MODEL
         logger.info("OpenAI stream chat — model: %s, max_tokens: %d", model, max_tokens)
 
@@ -332,7 +314,7 @@ class OpenAIEmbeddingClient:
                 )
                 await asyncio.sleep(delay)
 
-            except Exception as exc:
+            except (ValueError, TypeError, RuntimeError) as exc:
                 logger.error("Unexpected error during stream chat: %s", exc)
                 raise ChatCompletionError(str(exc))
 
@@ -342,10 +324,6 @@ class OpenAIEmbeddingClient:
         temperature: float = 0.7,
         max_tokens: int = 1000,
     ) -> AsyncGenerator[str, None]:
-        """
-        Stream a chat completion with full message history token-by-token.
-        Used for general chat streaming via WebSocket.
-        """
         model = settings.OPENAI_CHAT_MODEL
         logger.info(
             "OpenAI stream chat with history — model: %s, messages: %d, "
@@ -398,7 +376,7 @@ class OpenAIEmbeddingClient:
                 )
                 await asyncio.sleep(delay)
 
-            except Exception as exc:
+            except (ValueError, TypeError, RuntimeError) as exc:
                 logger.error(
                     "Unexpected error during stream chat with history: %s",
                     exc,

@@ -144,8 +144,19 @@ async def verify_and_consume(email: str, submitted_otp: str) -> dict | None:
 
 
 async def has_pending_registration(email: str) -> bool:
+    """
+    Check if a pending OTP registration exists for this email.
+
+    Returns False when:
+    - No pending registration exists
+    - Redis is unavailable (logs a warning)
+    """
     redis = get_redis_client()
     if redis is None:
+        logger.warning(
+            "has_pending_registration: Redis unavailable for %s — returning False",
+            email,
+        )
         return False
     return bool(await redis.exists(f"{_PENDING_PREFIX}{email}"))
 
@@ -156,3 +167,89 @@ async def delete_pending_registration(email: str) -> None:
         return
     await redis.delete(f"{_PENDING_PREFIX}{email}")
     logger.info("Pending OTP cancelled for %s", email)
+
+
+# ── Password Reset OTP (separate Redis prefix) ─────────────────────────────────
+
+_RESET_PREFIX = "otp:reset:"
+
+
+async def store_reset_otp(email: str, user_id: int) -> str:
+    """
+    Store a password reset OTP in Redis.
+    Unlike signup OTP, user_id is stored directly since the user already exists.
+    """
+    redis = get_redis_client()
+    if redis is None:
+        raise RuntimeError("Redis is unavailable.")
+
+    otp = _generate_otp()
+    payload = json.dumps(
+        {
+            "otp": otp,
+            "attempts": 0,
+            "user_id": str(user_id),
+        }
+    )
+    key = f"{_RESET_PREFIX}{email}"
+    await redis.setex(key, settings.OTP_EXPIRE_SECONDS, payload)
+    logger.info(
+        "Reset OTP stored for %s (user_id=%s, TTL=%ss)",
+        email,
+        user_id,
+        settings.OTP_EXPIRE_SECONDS,
+    )
+    return otp
+
+
+async def verify_reset_otp(email: str, submitted_otp: str) -> dict | None:
+    """
+    Verify a password reset OTP using the same Lua script but with the reset prefix.
+    Returns {user_id: str} on success, None on failure.
+    """
+    redis = get_redis_client()
+    if redis is None:
+        raise RuntimeError("Redis is unavailable.")
+
+    key = f"{_RESET_PREFIX}{email}"
+
+    status, data = await redis.eval(
+        _VERIFY_LUA_SCRIPT,
+        1,  # numkeys
+        key,
+        submitted_otp,
+        str(settings.OTP_MAX_ATTEMPTS),
+    )
+
+    if status == 0:
+        # Correct OTP — entry was consumed by the script
+        logger.info("Reset OTP verified and consumed for %s", email)
+        if data and data.strip():
+            return {"user_id": data}
+        return None
+
+    if status == 1:
+        logger.warning("Max reset OTP attempts for %s — entry deleted", email)
+        return None
+
+    if status == 2:
+        logger.warning(
+            "Wrong reset OTP for %s (attempt %s/%d)",
+            email,
+            data,
+            settings.OTP_MAX_ATTEMPTS,
+        )
+        return None
+
+    # status == 3: key does not exist
+    logger.info("No pending reset OTP for %s (expired or never set)", email)
+    return None
+
+
+async def delete_reset_otp(email: str) -> None:
+    """Delete a pending reset OTP record (e.g. on email send failure)."""
+    redis = get_redis_client()
+    if redis is None:
+        return
+    await redis.delete(f"{_RESET_PREFIX}{email}")
+    logger.info("Reset OTP deleted for %s", email)

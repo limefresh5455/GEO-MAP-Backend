@@ -31,7 +31,6 @@ _NEARBY_SIGNAL_PATTERN = re.compile(
 
 
 def _build_text_cache_key(
-    user_id: int,
     text_query: str,
     bias_lat: Optional[float],
     bias_lon: Optional[float],
@@ -48,11 +47,10 @@ def _build_text_cache_key(
         f"|{max_result_count}|{open_now}|{min_rating}|{rank_preference}"
     )
     digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
-    return f"text_search:{user_id}:{digest}"
+    return f"text_search:{digest}"
 
 
 def _build_nearby_cache_key(
-    user_id: int,
     latitude: float,
     longitude: float,
     radius: float,
@@ -60,11 +58,10 @@ def _build_nearby_cache_key(
 ) -> str:
     lat = round(latitude, 4)
     lon = round(longitude, 4)
-    return f"nearby:{user_id}:{lat}:{lon}:{radius}:{max_result_count}"
+    return f"nearby:{lat}:{lon}:{radius}:{max_result_count}"
 
 
 def _build_autocomplete_cache_key(
-    user_id: int,
     input_text: str,
     bias_lat: Optional[float],
     bias_lon: Optional[float],
@@ -79,7 +76,7 @@ def _build_autocomplete_cache_key(
         f"{input_text.lower().strip()}|{lat_str}|{lon_str}|{types_str}|{language_code}"
     )
     digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
-    return f"autocomplete:{user_id}:{digest}"
+    return f"autocomplete:{digest}"
 
 
 class DiscoveryService:
@@ -119,13 +116,18 @@ class DiscoveryService:
     # ------------------------------------------------------------------
 
     async def _try_get_cache(self, key: str) -> Optional[List[DiscoveryPlaceResult]]:
-        """Return cached places or None.  Never raises."""
+        """Return cached places or None. Never raises. Cleans stale entries on fail."""
         cached = await self.redis_repo.get(key)
         if cached is not None:
             try:
                 return [DiscoveryPlaceResult(**item) for item in cached]
             except Exception as exc:
-                logger.warning("Cache deserialisation failed for key %s: %s", key, exc)
+                logger.warning(
+                    "Cache deserialisation failed for key %s — deleting stale entry: %s",
+                    key,
+                    exc,
+                )
+                await self.redis_repo.delete(key)
         return None
 
     async def _try_set_cache(
@@ -153,24 +155,38 @@ class DiscoveryService:
         places: List[DiscoveryPlaceResult],
         from_cache: bool,
     ) -> None:
+        """
+        Persist audit trail using a SEPARATE database session to avoid
+        rolling back the main session's committed data on failure.
+        """
         try:
-            query_row = self.search_repo.create_search_query(
-                user_id=user_id,
-                search_mode=search_mode,
-                resolved_mode=resolved_mode,
-                raw_query=raw_query,
-                latitude=latitude,
-                longitude=longitude,
-                radius=radius,
-                result_count=len(places),
-                from_cache=from_cache,
-            )
-            self.search_repo.create_search_results(
-                query_id=query_row.id,
-                user_id=user_id,
-                places=places,
-            )
-            self.db.commit()
+            from app.database.connection import SessionLocal
+
+            audit_db = SessionLocal()
+            try:
+                audit_search_repo = SearchRepository(audit_db)
+                query_row = audit_search_repo.create_search_query(
+                    user_id=user_id,
+                    search_mode=search_mode,
+                    resolved_mode=resolved_mode,
+                    raw_query=raw_query,
+                    latitude=latitude,
+                    longitude=longitude,
+                    radius=radius,
+                    result_count=len(places),
+                    from_cache=from_cache,
+                )
+                audit_search_repo.create_search_results(
+                    query_id=query_row.id,
+                    user_id=user_id,
+                    places=places,
+                )
+                audit_db.commit()
+            except Exception:
+                audit_db.rollback()
+                raise
+            finally:
+                audit_db.close()
         except Exception as exc:
             logger.critical(
                 "AUDIT PERSIST FAILED — search data lost (user=%s mode=%s query=%r): %s",
@@ -180,7 +196,6 @@ class DiscoveryService:
                 exc,
                 exc_info=True,
             )
-            self.db.rollback()
 
     async def text_search(
         self,
@@ -221,7 +236,6 @@ class DiscoveryService:
 
         # Build cache key
         cache_key = _build_text_cache_key(
-            user_id=user_id,
             text_query=request.text_query,
             bias_lat=bias_lat,
             bias_lon=bias_lon,
@@ -341,7 +355,6 @@ class DiscoveryService:
                 included_types = self._get_preset_types(DiscoveryPreset.PREFERRED_TYPES)
 
         cache_key = _build_nearby_cache_key(
-            user_id=user_id,
             latitude=latitude,
             longitude=longitude,
             radius=request.radius,
@@ -540,7 +553,6 @@ class DiscoveryService:
 
         # Build cache key
         cache_key = _build_autocomplete_cache_key(
-            user_id=user_id,
             input_text=input_text,
             bias_lat=bias_lat,
             bias_lon=bias_lon,
@@ -551,10 +563,20 @@ class DiscoveryService:
         # Redis check — cache returns raw list of dicts
         cached_predictions = await self.redis_repo.get(cache_key)
         if cached_predictions is not None:
-            logger.info(
-                "Autocomplete cache HIT — user=%s input=%r", user_id, input_text
-            )
-            return cached_predictions, True, bias_lat, bias_lon
+            # Validate that cached data is a list of dicts with required keys
+            if isinstance(cached_predictions, list) and all(
+                isinstance(p, dict) and "place_id" in p for p in cached_predictions
+            ):
+                logger.info(
+                    "Autocomplete cache HIT — user=%s input=%r", user_id, input_text
+                )
+                return cached_predictions, True, bias_lat, bias_lon
+            else:
+                logger.warning(
+                    "Autocomplete cache stale — invalid format for key %s, deleting",
+                    cache_key,
+                )
+                await self.redis_repo.delete(cache_key)
 
         # Cache miss → call Google
         logger.info(

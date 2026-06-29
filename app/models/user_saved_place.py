@@ -16,14 +16,6 @@ from app.database.base import Base
 
 
 class UserSavedPlace(Base):
-    """
-    Places a user has saved/favorited.
-
-    A user can save the same place multiple times with different location
-    contexts (e.g. saved near home vs saved near work). The saved_location
-    columns track where the user was when they saved the place.
-    """
-
     __tablename__ = "user_saved_places"
 
     id = Column(Integer, primary_key=True, index=True)

@@ -9,7 +9,6 @@ class AIChatMessage(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # FK updated to String(36) to match UUID-based AIChatSession.id
     session_id = Column(
         String(36),
         ForeignKey("ai_chat_sessions.id", ondelete="CASCADE"),

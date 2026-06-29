@@ -5,11 +5,18 @@ from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
+from app.core.auth_utils import strip_bearer_prefix, validate_token_sub
 from app.core.security import decode_access_token
 from app.core.websocket_manager import ConnectionManager
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
-from app.schemas.websocket import WSClientMessage
+from app.schemas.websocket import (
+    WSChunk,
+    WSClientMessage,
+    WSError,
+    WSStreamEnd,
+    WSStreamStart,
+)
 from app.services.ai_chat_service import AIChatService
 from app.services.place_qa_service import PlaceQAService
 
@@ -24,27 +31,6 @@ _WS_RECEIVE_TIMEOUT = 300.0  # 5 minutes
 
 @router.websocket("/ws/chat")
 async def ws_chat_endpoint(websocket: WebSocket):
-    """
-    WebSocket endpoint for streaming chat and place Q&A.
-
-    **Authentication:** Client must send a JWT token as the first message:
-    ```json
-    { "type": "auth", "token": "Bearer <jwt>" }
-    ```
-
-    After authentication, send messages:
-    ```json
-    { "type": "chat_message", "query": "Plan a trip", "session_id": null }
-    { "type": "place_question", "query": "Is it open?", "place_id": "...", "session_id": null }
-    ```
-
-    Server streams responses as JSON events:
-    - `{"type": "connected", ...}` — initial ack
-    - `{"type": "metadata", "session_id": "...", "is_new_session": bool}`
-    - `{"type": "token", "content": "..."}` — one per chunk
-    - `{"type": "done", "title": "..."}` — streaming complete
-    - `{"type": "error", "message": "..."}` — error occurred
-    """
     await websocket.accept()
     logger.info("WebSocket connection accepted")
 
@@ -54,7 +40,6 @@ async def ws_chat_endpoint(websocket: WebSocket):
     pinecone_client = None
 
     try:
-        # ── Step 1: Authenticate ──
         try:
             raw = await asyncio.wait_for(
                 websocket.receive_text(), timeout=_WS_RECEIVE_TIMEOUT
@@ -87,13 +72,7 @@ async def ws_chat_endpoint(websocket: WebSocket):
         from app.services.token_blacklist_service import TokenBlacklistService
 
         db = SessionLocal()
-        # Case-insensitive Bearer token stripping
-        raw_token = auth_msg["token"]
-        prefix = "Bearer "
-        if raw_token[: len(prefix)].lower() == prefix.lower():
-            token_str = raw_token[len(prefix) :].strip()
-        else:
-            token_str = raw_token.strip()
+        token_str = strip_bearer_prefix(auth_msg["token"])
 
         # Blacklist check
         is_blacklisted = await TokenBlacklistService.is_token_blacklisted(token_str)
@@ -122,9 +101,8 @@ async def ws_chat_endpoint(websocket: WebSocket):
             return
 
         # Load user from DB
-        try:
-            user_id_int = int(payload["sub"])
-        except (ValueError, TypeError):
+        user_id_int = validate_token_sub(payload.get("sub"))
+        if user_id_int is None:
             await websocket.send_json(
                 {
                     "type": "error",
@@ -194,12 +172,22 @@ async def ws_chat_endpoint(websocket: WebSocket):
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                 return
 
-            data = json.loads(raw)
+            # Parse JSON — if invalid, send error and keep listening
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": f"Invalid JSON received: {exc}",
+                    }
+                )
+                continue
 
             # Validate message format
             try:
                 msg = WSClientMessage(**data)
-            except Exception as exc:
+            except (ValueError, TypeError, KeyError) as exc:
                 await websocket.send_json(
                     {
                         "type": "error",
@@ -260,7 +248,7 @@ async def ws_chat_endpoint(websocket: WebSocket):
                         }
                     )
 
-            except Exception as exc:
+            except (RuntimeError, ValueError, TypeError, KeyError) as exc:
                 logger.exception(
                     "WebSocket handler error (user_id=%s, type=%s)",
                     user.id,
@@ -286,9 +274,9 @@ async def ws_chat_endpoint(websocket: WebSocket):
                     "message": "Invalid JSON received",
                 }
             )
-        except Exception:
+        except (RuntimeError, AttributeError, OSError):
             pass
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:
         logger.exception("WebSocket unexpected error: %s", exc)
     finally:
         if user:
@@ -296,7 +284,7 @@ async def ws_chat_endpoint(websocket: WebSocket):
         if db:
             try:
                 db.close()
-            except Exception:
+            except (RuntimeError, AttributeError):
                 pass
 
 
@@ -308,15 +296,54 @@ async def _handle_chat_message(
     query: str,
     session_id: Optional[str],
 ) -> None:
-    """Handle a chat_message type — stream AI response via the chat service."""
     service = AIChatService(db=db, openai_client=openai_client)
+    current_session_id: Optional[str] = None
 
-    async for event_json in service.stream_chat(
-        user_id=user.id,
-        session_id=session_id,
-        query=query,
-    ):
-        await websocket.send_text(event_json)
+    try:
+        async for event_json in service.stream_chat(
+            user_id=user.id,
+            session_id=session_id,
+            query=query,
+        ):
+            event = json.loads(event_json)
+            event_type = event.get("type")
+
+            if event_type == "metadata":
+                current_session_id = event["session_id"]
+                await websocket.send_json(
+                    WSStreamStart(
+                        session_id=current_session_id,
+                        is_new_session=event.get("is_new_session", False),
+                    ).model_dump()
+                )
+            elif event_type == "token":
+                await websocket.send_json(
+                    WSChunk(
+                        session_id=current_session_id or "",
+                        token=event["content"],
+                    ).model_dump()
+                )
+            elif event_type == "done":
+                await websocket.send_json(
+                    WSStreamEnd(
+                        session_id=current_session_id or "",
+                        title=event.get("title"),
+                    ).model_dump()
+                )
+    except (RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        logger.error(
+            "WebSocket chat_message failed (user=%s, session=%s): %s",
+            user.id,
+            session_id,
+            exc,
+            extra={"metric": "ws.chat_message_error", "user_id": user.id},
+        )
+        await websocket.send_json(
+            WSError(
+                session_id=current_session_id,
+                message=f"Chat failed: {str(exc)}",
+            ).model_dump()
+        )
 
 
 async def _handle_place_question(
@@ -330,18 +357,61 @@ async def _handle_place_question(
     session_id: Optional[str],
     top_k: int,
 ) -> None:
-    """Handle a place_question type — stream AI response via the QA service."""
     service = PlaceQAService(
         db=db,
         openai_client=openai_client,
         pinecone_client=pinecone_client,
     )
+    current_session_id: Optional[str] = None
 
-    async for event_json in service.stream_answer(
-        place_id=place_id,
-        question=query,
-        user_id=user.id,
-        session_id=session_id,
-        top_k=top_k,
-    ):
-        await websocket.send_text(event_json)
+    try:
+        async for event_json in service.stream_answer(
+            place_id=place_id,
+            question=query,
+            user_id=user.id,
+            session_id=session_id,
+            top_k=top_k,
+        ):
+            event = json.loads(event_json)
+            event_type = event.get("type")
+
+            if event_type == "metadata":
+                current_session_id = event["session_id"]
+                await websocket.send_json(
+                    WSStreamStart(
+                        session_id=current_session_id,
+                        is_new_session=event.get("is_new_session", False),
+                    ).model_dump()
+                )
+            elif event_type == "token":
+                await websocket.send_json(
+                    WSChunk(
+                        session_id=current_session_id or "",
+                        token=event["content"],
+                    ).model_dump()
+                )
+            elif event_type == "done":
+                await websocket.send_json(
+                    WSStreamEnd(
+                        session_id=current_session_id or "",
+                        title=event.get("title"),
+                    ).model_dump()
+                )
+    except (RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        logger.error(
+            "WebSocket place_question failed (user=%s, place=%s): %s",
+            user.id,
+            place_id,
+            exc,
+            extra={
+                "metric": "ws.place_question_error",
+                "user_id": user.id,
+                "place_id": place_id,
+            },
+        )
+        await websocket.send_json(
+            WSError(
+                session_id=current_session_id,
+                message=f"Question failed: {str(exc)}",
+            ).model_dump()
+        )

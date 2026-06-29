@@ -1,12 +1,9 @@
 from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional, Union
-
 from pydantic import BaseModel, Field, field_validator
 
-# ---------------------------------------------------------------------------
 # Enums
-# ---------------------------------------------------------------------------
 
 
 class RankPreference(str, Enum):
@@ -24,22 +21,12 @@ class NearbyRankPreference(str, Enum):
 
 
 class DiscoveryPreset(str, Enum):
-    """
-    Predefined discovery presets for quick nearby search.
-
-    - PREFERRED_TYPES: Everyday useful places (restaurants, cafes, hospitals, shopping)
-    - FAMOUS_PLACES: Tourist attractions, landmarks, cultural sites
-    """
 
     PREFERRED_TYPES = "preferred_types"
     FAMOUS_PLACES = "famous_places"
 
 
 class PredefinedPlaceType(str, Enum):
-    """
-    Predefined place types for quick discovery in Nearby Search.
-    These are the most commonly searched place categories.
-    """
 
     # Religious places
     TEMPLE = "hindu_temple"  # Hindu temples
@@ -207,9 +194,7 @@ class TextSearchRequest(BaseModel):
         return v.strip()
 
 
-# ---------------------------------------------------------------------------
 # Nearby Search request  (mirrors existing schema, extended for discovery)
-# ---------------------------------------------------------------------------
 
 
 class NearbyDiscoveryRequest(BaseModel):
@@ -287,9 +272,7 @@ class NearbyDiscoveryRequest(BaseModel):
         return v
 
 
-# ---------------------------------------------------------------------------
 # Discovery Router request
-# ---------------------------------------------------------------------------
 
 
 class DiscoverySearchRequest(BaseModel):

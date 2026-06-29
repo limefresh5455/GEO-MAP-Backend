@@ -21,6 +21,7 @@ class VisitService:
         fields = {
             "display_name": None,
             "formatted_address": None,
+            "primary_type": None,
             "latitude": None,
             "longitude": None,
         }
@@ -28,6 +29,7 @@ class VisitService:
         if place:
             fields["display_name"] = place.display_name
             fields["formatted_address"] = place.formatted_address
+            fields["primary_type"] = place.primary_type
             fields["latitude"] = place.latitude
             fields["longitude"] = place.longitude
         return fields

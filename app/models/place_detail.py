@@ -30,12 +30,12 @@ class PlaceDetail(Base):
     google_maps_uri = Column(Text, nullable=True)
     rating = Column(Float, nullable=True)
     user_rating_count = Column(Integer, nullable=True)
-    business_status = Column(String(50), nullable=True)  # "OPERATIONAL" etc.
+    business_status = Column(String(50), nullable=True)
     opening_hours = Column(JSONB, nullable=True)
-    open_now = Column(Boolean, nullable=True)  # snapshot at fetch time
-    photos = Column(JSONB, nullable=True)  # List[{name, widthPx, heightPx}]
-    reviews = Column(JSONB, nullable=True)  # List[{text, rating, author, ...}]
-    price_level = Column(String(30), nullable=True)  # "PRICE_LEVEL_MODERATE" etc.
+    open_now = Column(Boolean, nullable=True)
+    photos = Column(JSONB, nullable=True)
+    reviews = Column(JSONB, nullable=True)
+    price_level = Column(String(30), nullable=True)
     wheelchair_accessible_entrance = Column(Boolean, nullable=True)
     editorial_summary = Column(Text, nullable=True)
     extended_data = Column(JSONB, nullable=True)

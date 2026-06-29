@@ -2,7 +2,7 @@ import logging
 from typing import Tuple
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from app.exceptions.custom_exceptions import LocationNotFoundError
+from app.exceptions.custom_exceptions import LocationNotFoundError, NotFoundError
 from app.models.user_location import UserLocation
 from app.repositories.location_repository import LocationRepository
 from app.schemas.location import GPSUpdateRequest, ManualUpdateRequest
@@ -193,3 +193,18 @@ class LocationService:
         if found:
             self.db.commit()
         return found
+
+    # History Delete
+    def delete_history_record(self, user_id: int, history_id: int) -> None:
+        entry = self.repo.get_history_by_id(user_id, history_id)
+        if not entry:
+            raise NotFoundError(
+                detail=f"Location history entry with id {history_id} not found."
+            )
+        self.repo.delete_history_entry(entry)
+        self.db.commit()
+        logger.info(
+            "Deleted location history entry id=%s for user_id=%s",
+            history_id,
+            user_id,
+        )

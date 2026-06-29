@@ -136,20 +136,24 @@ async def get_saved_nearby(
         "place",
         description="'place' = filter by place's location, 'saved' = filter by where you saved it",
     ),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=50, description="Items per page (max 50)"),
     current_user: User = Depends(get_current_user),
     service: SavedPlaceService = Depends(get_service),
 ) -> ListSavedPlacesResponse:
-    items = await service.get_saved_nearby(
+    items, total, has_next = await service.get_saved_nearby(
         user_id=current_user.id,
         lat=lat,
         lon=lon,
         radius_km=radius_km,
         filter_by=filter_by,
+        page=page,
+        page_size=page_size,
     )
     return ListSavedPlacesResponse(
         data=items,
-        total_count=len(items),
-        page=1,
-        page_size=20,
-        has_next=False,
+        total_count=total,
+        page=page,
+        page_size=page_size,
+        has_next=has_next,
     )

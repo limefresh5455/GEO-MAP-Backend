@@ -24,8 +24,8 @@ TEXT_SEARCH_FIELD_MASK = ",".join(
         "places.businessStatus",
         "places.googleMapsUri",
         "places.currentOpeningHours.openNow",
-        "places.priceLevel",  # Phase 4: Price range
-        "places.photos",  # Phase 4: Photo thumbnails
+        "places.priceLevel",
+        "places.photos",
     ]
 )
 

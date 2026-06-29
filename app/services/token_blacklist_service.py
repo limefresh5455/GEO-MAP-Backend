@@ -9,15 +9,13 @@ from app.core.redis import get_redis_client
 logger = logging.getLogger(__name__)
 
 # Maximum TTL for any blacklisted token in Redis.
-# Access tokens are 1 hour — we cap at 1 hour so refresh tokens
-# (7-day TTL) don't fill Redis memory. A blacklisted refresh token
-# only needs to stay blocked long enough that an attacker can't reuse
-# it; after 1 hour, the associated access token has also expired.
-_BLACKLIST_MAX_TTL_SECONDS = 3600  # 1 hour
+# Refresh tokens (7-day TTL) keep the blacklist for their full remaining
+# lifetime so that an attacker who steals an old refresh token cannot
+# reuse it after rotation. Access tokens (1 hour) use their remaining TTL.
+_BLACKLIST_MAX_TTL_SECONDS = 604800  # 7 days (match refresh token lifetime)
 
 
 class TokenBlacklistService:
-    # Redis key prefix for blacklisted tokens
     BLACKLIST_PREFIX = "token:blacklist:"
 
     @staticmethod
@@ -28,9 +26,6 @@ class TokenBlacklistService:
     @staticmethod
     def _get_token_expiration(token: str) -> Optional[int]:
         try:
-            # Use verified decode when possible; fall back to unverified only for
-            # expiration extraction which is non-critical (used for TTL capping only).
-            # The token has already been verified by this point in the auth flow.
             from app.core.security import decode_access_token, decode_refresh_token
 
             payload = decode_access_token(token)
@@ -71,9 +66,8 @@ class TokenBlacklistService:
                 logger.info("Token already expired, not blacklisting")
                 return True
 
-            # Cap TTL so refresh tokens (7 days) don't bloat Redis.
-            # 1 hour is sufficient — after that the paired access token
-            # has also expired, so the refresh token is useless anyway.
+            # Cap TTL to prevent runaway memory in Redis.
+            # Refresh tokens are blacklisted for up to 7 days.
             capped_ttl = min(ttl, _BLACKLIST_MAX_TTL_SECONDS)
 
             # Store token in Redis with expiration

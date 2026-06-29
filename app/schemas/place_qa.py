@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
 
+from app.utils.session_id import validate_uuid4
+
 # ---------------------------------------------------------------------------
 # Answer source constants
 # ---------------------------------------------------------------------------
@@ -58,13 +60,8 @@ class PlaceQuestionRequest(BaseModel):
 
     @field_validator("session_id", mode="before")
     @classmethod
-    def normalize_session_id(cls, value):
-        if value is None:
-            return None
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return None
+    def validate_session_id(cls, v):
+        return validate_uuid4(v)
 
 
 # ---------------------------------------------------------------------------

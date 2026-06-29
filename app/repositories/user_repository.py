@@ -1,6 +1,7 @@
 # app/repositories/user_repository.py
 import logging
 from typing import Optional
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 from app.models.user import User
@@ -12,12 +13,10 @@ _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(plain: str) -> str:
-    """Return a bcrypt hash of the given plaintext password."""
     return _pwd_context.hash(plain)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    """Return True if plain matches the bcrypt hash."""
     return _pwd_context.verify(plain, hashed)
 
 
@@ -45,11 +44,6 @@ class UserRepository:
         email: str,
         hashed_password: str,
     ) -> User:
-        """
-        Create a user in 'pending' state (not yet active, not verified).
-        The user will be activated after OTP verification.
-        This avoids storing the hashed password in Redis.
-        """
         user = User(
             full_name=full_name,
             email=email,
@@ -65,24 +59,29 @@ class UserRepository:
         return user
 
     def activate_pending_user(self, user: User) -> User:
-        """
-        Activate a user after successful OTP verification.
-        """
         user.email_verified = True
         user.is_active = True
         user.credits = 50
+        user.password_changed_at = func.now()
         self.db.flush()
         logger.info("Activated user after OTP: id=%s email=%s", user.id, user.email)
         return user
 
     def delete_pending_user(self, user: User) -> None:
-        """Delete a pending user (e.g., on OTP expiry or cleanup)."""
         self.db.delete(user)
         self.db.flush()
-        logger.info("Deleted pending user: id=%s email=%s", user.id, user.email)
+        logger.info(f"Deleted pending user: {user.id}, {user.email}")
 
     def deactivate(self, user: User) -> User:
         user.is_active = False
         self.db.flush()
         logger.info("Deactivated user id=%s", user.id)
+        return user
+
+    def update_password(self, user: User, new_hashed_password: str) -> User:
+        """Update the user's hashed password, bump timestamps, and record when the password changed."""
+        user.hashed_password = new_hashed_password
+        user.password_changed_at = func.now()
+        self.db.flush()
+        logger.info("Password updated for user id=%s", user.id)
         return user

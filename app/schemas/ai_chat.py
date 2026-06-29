@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from typing import List, Optional
+from pydantic import BaseModel, Field, field_validator
 
-from pydantic import BaseModel, Field
+from app.utils.session_id import validate_uuid4
 
 
 class AIChatMessageSchema(BaseModel):
@@ -18,7 +19,7 @@ class AIChatMessageSchema(BaseModel):
 
 class AIChatResponse(BaseModel):
     success: bool = True
-    session_id: str  # UUID v4 string (was int)
+    session_id: str
     answer: str
     is_new_session: bool = False
     title: Optional[str] = None
@@ -27,9 +28,6 @@ class AIChatResponse(BaseModel):
 
 class AIChatStartRequest(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
-
-    # Optional session ID. Omit, null, or empty to start a new session.
-    # Provide a valid UUID v4 string to continue an existing session.
     session_id: Optional[str] = Field(
         default=None,
         description=(
@@ -38,9 +36,14 @@ class AIChatStartRequest(BaseModel):
         ),
     )
 
+    @field_validator("session_id", mode="before")
+    @classmethod
+    def validate_session_id(cls, v):
+        return validate_uuid4(v)
+
 
 class AIChatSessionDetail(BaseModel):
-    session_id: str  # UUID v4 string (was int)
+    session_id: str
     title: str
     created_at: datetime
     last_message_at: Optional[datetime] = None

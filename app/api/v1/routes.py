@@ -28,13 +28,8 @@ async def compute_route(
     service: RoutesService = Depends(get_routes_service),
 ):
     """
-    **Request body:**
-    ```json
-    {
-      "place_id": "ChIJ...",
-      "travel_mode": "DRIVE"
-    }
-    ```
+    Compute a route from the user's saved location to a destination place.
+    Specify the place_id and travel_mode.
     """
     logger.info(
         "compute_route — user_id: %s, destination: %s, mode: %s",
@@ -68,9 +63,6 @@ async def compute_route(
     except GooglePlacesAPIError:
         raise
 
-    # Attach origin coordinates to the response for map centering
-    # BUG FIX: Use model_copy instead of dump + reconstruct, which is
-    # both more efficient and avoids potential serialization issues.
     return response.model_copy(
         update={
             "origin_latitude": origin_lat,
