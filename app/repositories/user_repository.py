@@ -28,7 +28,21 @@ class UserRepository:
         return self.db.query(User).filter(User.id == user_id).first()
 
     def get_by_email(self, email: str) -> Optional[User]:
-        return self.db.query(User).filter(User.email == email).first()
+        return self.db.query(User).filter(User.email == email.strip().lower()).first()
+
+    def get_by_email_for_update(self, email: str) -> Optional[User]:
+        """
+        Same as get_by_email but acquires a row-level lock (SELECT … FOR UPDATE).
+        Use this inside the signup transaction to prevent a race condition where
+        two concurrent requests both pass the existence check for the same email.
+        The first caller locks the row; the second blocks until the first commits.
+        """
+        return (
+            self.db.query(User)
+            .filter(User.email == email.strip().lower())
+            .with_for_update()
+            .first()
+        )
 
     def get_active_by_id(self, user_id: int) -> Optional[User]:
         return (

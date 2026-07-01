@@ -16,6 +16,8 @@ from app.services.token_blacklist_service import TokenBlacklistService
 
 logger = logging.getLogger(__name__)
 bearer_scheme = HTTPBearer()
+# auto_error=False so public endpoints can receive an optional token
+bearer_scheme_optional = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
@@ -95,3 +97,51 @@ async def get_current_verified_user(
             ),
         )
     return current_user
+
+
+async def get_optional_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme_optional),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """
+    Returns the authenticated User if a valid Bearer token is present in the
+    request, or None if no Authorization header was sent.
+
+    Used on public endpoints (signup, login) to detect callers who are already
+    logged in — without making authentication mandatory.
+    """
+    if credentials is None:
+        return None
+
+    token = credentials.credentials
+
+    # Reject blacklisted tokens so a logged-out token cannot be replayed
+    try:
+        is_blacklisted = await TokenBlacklistService.is_token_blacklisted(token)
+        if is_blacklisted:
+            return None
+    except Exception:
+        # If Redis is unavailable we simply treat the token as absent
+        return None
+
+    payload = decode_access_token(token)
+    if payload is None:
+        return None
+
+    user_id = validate_token_sub(payload.get("sub"))
+    if user_id is None:
+        return None
+
+    repo = UserRepository(db)
+    user = repo.get_active_by_id(user_id)
+    if user is None or not user.is_active:
+        return None
+
+    # Honour password-changed-at invalidation
+    if user.password_changed_at is not None:
+        token_iat = payload.get("iat")
+        if token_iat is not None and token_iat < user.password_changed_at.timestamp():
+            return None
+
+    return user

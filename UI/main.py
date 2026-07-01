@@ -20,14 +20,14 @@ STATIC_DIR = UI_DIR / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
-# Serve the API Tester page
+# Serve the payment purchase page (main UI)
 
 
 @router.get("", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def api_tester_page(request: Request):
-    """Render the interactive API tester dashboard."""
+async def payments_page(request: Request):
+    """Render the credit purchase UI."""
     return templates.TemplateResponse(
-        "api_tester.html",
-        {"request": request, "page_title": "GeoMap API Tester"},
+        "payments.html",
+        {"request": request, "page_title": "GeoMap — Buy Credits"},
     )

@@ -22,6 +22,7 @@ from app.models import place_qa_session  # noqa: F401
 from app.models import place_qa_message  # noqa: F401
 from app.models import user_saved_place  # noqa: F401
 from app.models import place_visit_log  # noqa: F401
+from app.models import payment_transaction  # noqa: F401
 
 config = context.config
 

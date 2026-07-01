@@ -1,9 +1,19 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Client → Server messages
 # ---------------------------------------------------------------------------
+
+
+def _reject_float_int(value, field_name: str):
+    """Reject float values for an integer field to prevent silent truncation."""
+    if isinstance(value, float):
+        raise ValueError(
+            f"{field_name} must be a whole number (integer). "
+            f"Decimal values are not supported."
+        )
+    return value
 
 
 class WSClientMessage(BaseModel):
@@ -36,6 +46,11 @@ class WSClientMessage(BaseModel):
         le=10,
         description="Number of knowledge chunks to retrieve (place_question only)",
     )
+
+    @field_validator("top_k", mode="before")
+    @classmethod
+    def reject_float_top_k(cls, v):
+        return _reject_float_int(v, "top_k")
 
 
 # ---------------------------------------------------------------------------

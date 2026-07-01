@@ -55,11 +55,24 @@ def validate_password_strength(v: str) -> str:
     return v
 
 
+# ── Email normalisation helper ──────────────────────────────────────────────
+
+
+def normalize_email(v: str) -> str:
+    """Strip whitespace and lowercase the email."""
+    return v.strip().lower()
+
+
 # Signup
 class SignupRequest(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=100, examples=["Jane Doe"])
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email_field(cls, v: str) -> str:
+        return normalize_email(v)
 
     @field_validator("password")
     @classmethod
@@ -71,6 +84,14 @@ class SignupResponse(BaseModel):
     message: str
     email: str
     otp_expires_in_seconds: int
+    otp_sent: bool = Field(
+        default=True,
+        description=(
+            "True when a verification OTP was actually dispatched to the email. "
+            "False when the email is already registered and verified — no OTP was sent. "
+            "Clients should redirect to login when this is False."
+        ),
+    )
 
 
 # ── Verify OTP ────────────────────────────────────────────────────────────────
@@ -82,6 +103,11 @@ class VerifyOTPRequest(BaseModel):
         ..., min_length=6, max_length=6, pattern=r"^\d{6}$", examples=["482910"]
     )
 
+    @field_validator("email")
+    @classmethod
+    def normalize_email_field(cls, v: str) -> str:
+        return normalize_email(v)
+
 
 # ── Login ─────────────────────────────────────────────────────────────────────
 
@@ -89,6 +115,11 @@ class VerifyOTPRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email_field(cls, v: str) -> str:
+        return normalize_email(v)
 
     @field_validator("password")
     @classmethod
@@ -161,6 +192,11 @@ class MessageResponse(BaseModel):
 class ResendOTPRequest(BaseModel):
     email: EmailStr
 
+    @field_validator("email")
+    @classmethod
+    def normalize_email_field(cls, v: str) -> str:
+        return normalize_email(v)
+
 
 class ResendOTPResponse(BaseModel):
     message: str
@@ -192,6 +228,11 @@ class VerificationStatusResponse(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
+    @field_validator("email")
+    @classmethod
+    def normalize_email_field(cls, v: str) -> str:
+        return normalize_email(v)
+
 
 class ForgotPasswordResponse(BaseModel):
     message: str
@@ -207,6 +248,11 @@ class VerifyResetOTPRequest(BaseModel):
     otp: str = Field(
         ..., min_length=6, max_length=6, pattern=r"^\d{6}$", examples=["482910"]
     )
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email_field(cls, v: str) -> str:
+        return normalize_email(v)
 
 
 class VerifyResetOTPResponse(BaseModel):

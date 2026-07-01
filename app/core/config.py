@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     # SMTP settings: TLS toggle
     SMTP_USE_TLS: bool = True
 
+    # Stripe
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+
+    # Exchange Rate (INR → USD conversion for Stripe)
+    EXCHANGE_RATE_CACHE_TTL: int = 600  # seconds — how long to cache the live rate (10 min)
+
     # OTP settings
     OTP_EXPIRE_SECONDS: int = 300  # 5 minutes
     OTP_MAX_ATTEMPTS: int = 5

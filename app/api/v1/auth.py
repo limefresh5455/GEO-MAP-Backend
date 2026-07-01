@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -17,7 +18,7 @@ from app.core.security import (
     decode_refresh_token,
 )
 from app.database.connection import get_db
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user, get_optional_user
 from app.models.user import User
 from app.repositories.user_repository import (
     UserRepository,
@@ -107,7 +108,9 @@ def _issue_token_pair(user: User) -> TokenResponse:
         "Creates a pending registration and sends a 6-digit OTP to the email. "
         "Account is not created yet - call verify-otp to finish. "
         "Password rules: minimum 8 characters, 1 uppercase letter, 1 digit, "
-        "1 lowercase letter, and 1 special character. OTP expires in 2 minutes."
+        "1 lowercase letter, and 1 special character. OTP expires in 2 minutes. "
+        "Returns HTTP 403 if a valid session token is already present in the "
+        "Authorization header (already logged-in users cannot re-register)."
     ),
 )
 @limiter.limit("5/minute")
@@ -115,10 +118,37 @@ async def signup(
     request: Request,
     payload: SignupRequest,
     db: Session = Depends(get_db),
+    # ── Layer 1: session guard ─────────────────────────────────────────────
+    # Resolves to the logged-in User if a valid Bearer token is present,
+    # or None for unauthenticated callers. No error is raised when absent.
+    caller: User | None = Depends(get_optional_user),
 ):
+    # ── Layer 1: Reject already-authenticated callers immediately ──────────
+    # An authenticated user attempting to sign up again is either confused or
+    # probing the API. Return 403 with a clear redirect hint — no DB work done.
+    if caller is not None:
+        logger.warning(
+            "Signup attempt by already-authenticated user id=%s email=%s — blocked",
+            caller.id,
+            caller.email,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "You are already logged in. Please log out before creating a new account.",
+                "otp_sent": False,
+                "redirect_to": "/auth/logout",
+            },
+        )
+
     repo = UserRepository(db)
 
-    existing_user = repo.get_by_email(payload.email)
+    # ── Layer 2: check existing user WITH row lock ─────────────────────────
+    # Use SELECT … FOR UPDATE to serialize concurrent signup attempts for the
+    # same email.  If two requests arrive at nearly the same time, the first
+    # caller locks the row (or acquires an advisory lock), and the second
+    # blocks until the first commits.  This eliminates the TOCTOU window.
+    existing_user = repo.get_by_email_for_update(payload.email)
     if existing_user is not None:
         # ── Pending user (never verified OTP) → allow re-registration ──
         if not existing_user.email_verified:
@@ -131,24 +161,61 @@ async def signup(
             repo.delete_pending_user(existing_user)
             db.flush()
         else:
-            # Fully registered user — return generic success to prevent enumeration
+            # Fully registered user — tell the client explicitly so it can redirect
+            # to login. HTTP 409 is the correct semantic (resource already exists).
             logger.info(
-                "Signup blocked for existing verified email: %s — returning generic success",
+                "Signup blocked for existing verified email: %s — returning 409",
                 payload.email,
             )
-            return SignupResponse(
-                message="If an account with this email exists, a verification code has been sent.",
-                email=payload.email,
-                otp_expires_in_seconds=settings.OTP_EXPIRE_SECONDS,
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "An account with this email already exists. Please log in.",
+                    "otp_sent": False,
+                    "redirect_to": "/auth/login",
+                },
             )
 
     pw_hash = hash_password(payload.password)
 
-    pending_user = repo.create_pending_user(
-        full_name=payload.full_name,
-        email=payload.email,
-        hashed_password=pw_hash,
-    )
+    try:
+        pending_user = repo.create_pending_user(
+            full_name=payload.full_name,
+            email=payload.email,
+            hashed_password=pw_hash,
+        )
+    except IntegrityError:
+        # ── Layer 3: concurrent insert lost the race ────────────────────────
+        # Another request committed a pending user for this email between our
+        # SELECT (no row existed) and the INSERT.  Rollback the failed
+        # transaction, re-query the winner's row with a row lock, and let the
+        # client retry.
+        db.rollback()
+        winner = repo.get_by_email_for_update(payload.email)
+        if winner is not None and winner.email_verified:
+            logger.info(
+                "Signup IntegrityError — concurrent insert won for verified email: %s — returning 409",
+                payload.email,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "An account with this email already exists. Please log in.",
+                    "otp_sent": False,
+                    "redirect_to": "/auth/login",
+                },
+            )
+        logger.info(
+            "Signup IntegrityError — concurrent insert for %s — please retry",
+            payload.email,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "A registration for this email is already in progress. Please try again.",
+                "otp_sent": False,
+            },
+        )
 
     try:
         otp = await store_pending_registration(
@@ -191,6 +258,7 @@ async def signup(
         message="Verification code sent. Check your email and enter the code to complete registration.",
         email=payload.email,
         otp_expires_in_seconds=settings.OTP_EXPIRE_SECONDS,
+        otp_sent=True,
     )
 
 
@@ -278,7 +346,9 @@ async def verify_otp_endpoint(
     summary="Login — returns access + refresh tokens",
     description=(
         "Authenticate with email and password. "
-        "Returns an access token (valid 1 hour) and a refresh token (valid 7 days)."
+        "Returns an access token (valid 1 hour) and a refresh token (valid 7 days). "
+        "Returns HTTP 403 if a valid session token is already present in the "
+        "Authorization header (already logged-in users do not need to log in again)."
     ),
 )
 @limiter.limit("10/minute")
@@ -286,7 +356,23 @@ async def login(
     request: Request,
     payload: LoginRequest,
     db: Session = Depends(get_db),
+    # ── Layer 1: session guard ─────────────────────────────────────────────
+    caller: User | None = Depends(get_optional_user),
 ):
+    # ── Layer 1: Reject already-authenticated callers ──────────────────────
+    if caller is not None:
+        logger.warning(
+            "Login attempt by already-authenticated user id=%s — blocked",
+            caller.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "You are already logged in. Please log out first to switch accounts.",
+                "redirect_to": "/auth/logout",
+            },
+        )
+
     repo = UserRepository(db)
     user = repo.get_by_email(payload.email)
 
@@ -483,18 +569,26 @@ async def resend_otp(
     repo = UserRepository(db)
     user = repo.get_by_email(payload.email)
 
-    # ── Don't reveal whether the email exists or is verified (prevent enumeration) ──
-    if user is None or user.email_verified:
-        if user is None:
-            logger.info(
-                "Resend-OTP requested for non-existent email: %s — returning generic success",
-                payload.email,
-            )
-        else:
-            logger.info(
-                "Resend-OTP requested for already-verified email: %s — returning generic success",
-                payload.email,
-            )
+    # ── Verified user → tell the client to go to login ─────────────────────
+    if user is not None and user.email_verified:
+        logger.info(
+            "Resend-OTP requested for already-verified email: %s — returning 409",
+            payload.email,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "An account with this email already exists. Please log in.",
+                "redirect_to": "/auth/login",
+            },
+        )
+
+    # ── No account at all → generic response to prevent enumeration ────────
+    if user is None:
+        logger.info(
+            "Resend-OTP requested for non-existent email: %s — returning generic success",
+            payload.email,
+        )
         return ResendOTPResponse(
             message="If a pending account with this email exists, a new verification code has been sent.",
             email=payload.email,

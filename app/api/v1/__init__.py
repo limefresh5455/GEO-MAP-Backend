@@ -6,10 +6,12 @@ from app.api.v1 import (
     discovery,
     knowledge,
     locations,
+    payments as payments_router,
     place_details,
     place_qa,
     routes,
     saved_places as saved_places_router,
+    stripe_webhook as stripe_webhook_router,
     visits as visits_router,
     weather,
     ws,
@@ -29,3 +31,5 @@ api_router.include_router(weather.router)
 api_router.include_router(saved_places_router.router)
 api_router.include_router(visits_router.router)
 api_router.include_router(comparison.router)
+api_router.include_router(payments_router.router)
+api_router.include_router(stripe_webhook_router.router)

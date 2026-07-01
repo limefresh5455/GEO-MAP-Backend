@@ -43,7 +43,6 @@ end
 return {2, tostring(attempts)}
 """
 
-
 def _generate_otp(length: int = 6) -> str:
     return "".join(secrets.choice(string.digits) for _ in range(length))
 
@@ -53,23 +52,15 @@ async def store_pending_registration(
     full_name: str,
     hashed_password: str,
 ) -> str:
-    """
-    Store OTP data in Redis.
-    The hashed_password is NOT stored in Redis for security reasons.
-    Instead, a pending user record is created in PostgreSQL during signup
-    and only the user_id is stored alongside the OTP in Redis.
-    """
     redis = get_redis_client()
     if redis is None:
         raise RuntimeError("Redis is unavailable.")
 
     otp = _generate_otp()
-    # Store only the OTP and attempt counter in Redis — no hashed_password
     payload = json.dumps(
         {
             "otp": otp,
             "attempts": 0,
-            # user_id will be set after DB write in the signup endpoint
         }
     )
     key = f"{_PENDING_PREFIX}{email}"
@@ -79,7 +70,6 @@ async def store_pending_registration(
 
 
 async def set_pending_user_id(email: str, user_id: int) -> None:
-    """Associate a created user_id with the pending OTP record."""
     redis = get_redis_client()
     if redis is None:
         return
@@ -95,11 +85,6 @@ async def set_pending_user_id(email: str, user_id: int) -> None:
 
 
 async def verify_and_consume(email: str, submitted_otp: str) -> dict | None:
-    """
-    Verify OTP and return {user_id: str} on success, None on failure.
-    Returns user_id instead of full registration data to avoid exposing
-    hashed passwords via Redis.
-    """
     redis = get_redis_client()
     if redis is None:
         raise RuntimeError("Redis is unavailable.")
@@ -175,10 +160,6 @@ _RESET_PREFIX = "otp:reset:"
 
 
 async def store_reset_otp(email: str, user_id: int) -> str:
-    """
-    Store a password reset OTP in Redis.
-    Unlike signup OTP, user_id is stored directly since the user already exists.
-    """
     redis = get_redis_client()
     if redis is None:
         raise RuntimeError("Redis is unavailable.")

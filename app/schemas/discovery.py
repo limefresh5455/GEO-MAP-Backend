@@ -3,6 +3,17 @@ from enum import Enum
 from typing import List, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 
+
+def _reject_float_int(value, field_name: str):
+    """Reject float values for an integer field to prevent silent truncation."""
+    if isinstance(value, float):
+        raise ValueError(
+            f"{field_name} must be a whole number (integer). "
+            f"Decimal values are not supported."
+        )
+    return value
+
+
 # Enums
 
 
@@ -171,6 +182,11 @@ class TextSearchRequest(BaseModel):
         ),
     )
 
+    @field_validator("max_result_count", mode="before")
+    @classmethod
+    def reject_float_max_result_count(cls, v):
+        return _reject_float_int(v, "max_result_count")
+
     # B-025 FIX: Sanitize text_query to prevent injection attacks
     @field_validator("text_query")
     @classmethod
@@ -236,6 +252,11 @@ class NearbyDiscoveryRequest(BaseModel):
         default=None,
         description="POPULARITY (default) or DISTANCE",
     )
+
+    @field_validator("max_result_count", mode="before")
+    @classmethod
+    def reject_float_max_result_count(cls, v):
+        return _reject_float_int(v, "max_result_count")
 
     @field_validator("included_types", "excluded_types")
     @classmethod
@@ -306,6 +327,11 @@ class DiscoverySearchRequest(BaseModel):
             "The service passes the .value string to the appropriate Google client."
         ),
     )
+
+    @field_validator("max_result_count", mode="before")
+    @classmethod
+    def reject_float_max_result_count(cls, v):
+        return _reject_float_int(v, "max_result_count")
 
 
 # ---------------------------------------------------------------------------

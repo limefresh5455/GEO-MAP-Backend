@@ -1,0 +1,532 @@
+<!--
+  GeoMap Payment UI — Stripe Card Payment
+  Select package → enter card → 1-click Pay → credits added
+-->
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GeoMap — Buy Credits</title>
+  <script src="https://js.stripe.com/v3/"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d1117; color: #e6edf3; min-height: 100vh; line-height: 1.6;
+    }
+    .w { max-width: 740px; margin: 0 auto; padding: 32px 24px 64px; }
+
+    /* Token */
+    .tok {
+      background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+      padding: 16px 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .tok label { color: #8b949e; font-size: 13px; font-weight: 500; }
+    .tok input {
+      flex: 1; min-width: 200px; background: #0d1117; border: 1px solid #30363d;
+      border-radius: 6px; padding: 9px 12px; color: #e6edf3; font-family: 'Consolas','Courier New',monospace; font-size: 13px; outline: none;
+    }
+    .tok input:focus { border-color: #58a6ff; box-shadow: 0 0 0 3px rgba(88,166,255,0.15); }
+    .ts { font-size: 11px; padding: 3px 10px; border-radius: 12px; font-weight: 500; }
+    .ts.ok { background: rgba(63,185,80,0.15); color: #3fb950; }
+    .ts.bad { background: rgba(248,81,73,0.15); color: #f85149; }
+    .ts.no { background: rgba(139,148,158,0.15); color: #8b949e; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: none;
+      border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-pri { background: #58a6ff; color: #fff; }
+    .btn-pri:hover:not(:disabled) { background: #4a96e6; }
+    .btn-suc { background: #3fb950; color: #fff; }
+    .btn-suc:hover:not(:disabled) { background: #35a84a; }
+    .btn-ghost { background: transparent; color: #8b949e; border: 1px solid #30363d; }
+    .btn-ghost:hover:not(:disabled) { background: #21262d; color: #e6edf3; }
+    .btn-lg { padding: 12px 24px; font-size: 15px; width: 100%; justify-content: center; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+    .bal {
+      background: linear-gradient(135deg, #161b22, #1c2128);
+      border: 1px solid #30363d; border-radius: 10px;
+      padding: 18px 24px; margin-bottom: 20px;
+      display: none; align-items: center; justify-content: space-between;
+    }
+    .bal-l { font-size: 11px; color: #6e7681; text-transform: uppercase; letter-spacing: 0.5px; }
+    .bal-n { font-size: 30px; font-weight: 800; color: #fff; line-height: 1.2; }
+    .bal-n span { font-size: 14px; font-weight: 400; color: #6e7681; margin-left: 4px; }
+    .bal-e { font-size: 11px; color: #6e7681; }
+
+    .bx { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+    .bx-t { font-size: 14px; font-weight: 600; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+
+    .pg {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-bottom: 12px;
+    }
+    .pb {
+      background: #1c2128; border: 2px solid #30363d; border-radius: 8px; padding: 12px 10px;
+      text-align: center; cursor: pointer; transition: 0.15s;
+    }
+    .pb:hover { border-color: #58a6ff; }
+    .pb.sel { border-color: #58a6ff; background: rgba(88,166,255,0.08); }
+    .pb.pop { border-color: #d29922; }
+    .pb .l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #58a6ff; font-weight: 600; }
+    .pb .l .h { font-size: 8px; letter-spacing: 1px; color: #d29922; font-weight: 600; }
+    .pb .p { font-size: 18px; font-weight: 700; color: #fff; margin: 4px 0; }
+    .pb .c { font-size: 12px; color: #3fb950; }
+
+    .rw { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+    .rw label { font-size: 12px; color: #8b949e; min-width: 70px; }
+    .rw input { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; color: #e6edf3; font-size: 13px; outline: none; }
+    .rw input:focus { border-color: #58a6ff; }
+    .rw input[type="number"] { width: 110px; font-family: 'Consolas',monospace; }
+    .ht { font-size: 11px; color: #6e7681; }
+
+    .cp { display: inline-block; padding: 4px 12px; background: rgba(63,185,80,0.1); border: 1px solid rgba(63,185,80,0.15); border-radius: 6px; font-size: 13px; color: #3fb950; font-weight: 500; }
+
+    /* Stripe card element */
+    .se-wrap {
+      background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+      padding: 14px; margin-bottom: 12px; min-height: 44px; transition: border-color 0.15s;
+    }
+    .se-wrap:focus-within { border-color: #58a6ff; box-shadow: 0 0 0 3px rgba(88,166,255,0.15); }
+    .se-wrap .StripeElement--focus { outline: none; }
+
+    .summ {
+      background: rgba(88,166,255,0.06); border: 1px solid rgba(88,166,255,0.15);
+      border-radius: 8px; padding: 14px; margin-bottom: 12px; display: none;
+    }
+    .summ.sh { display: block; }
+    .summ-r { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+    .summ-r:last-child { border-top: 1px solid #30363d; margin-top: 6px; padding-top: 8px; }
+    .summ-l { font-size: 12px; color: #8b949e; }
+    .summ-v { font-size: 14px; font-weight: 600; color: #e6edf3; }
+    .summ-v.gr { color: #3fb950; }
+
+    .rs { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px; margin-top: 8px; font-family: 'Consolas',monospace; font-size: 12px; color: #f0f6fc; white-space: pre-wrap; word-break: break-word; display: none; max-height: 200px; overflow: auto; }
+    .rs.sh { display: block; }
+    .rs .k { color: #79c0ff; } .rs .s { color: #a5d6ff; } .rs .n { color: #79c0ff; } .rs .b { color: #ffa657; }
+
+    .msg { padding: 10px 16px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; display: none; }
+    .msg.sh { display: block; }
+    .msg.ok { background: rgba(63,185,80,0.1); border: 1px solid rgba(63,185,80,0.2); color: #3fb950; }
+    .msg.er { background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.2); color: #f85149; }
+    .msg.in { background: rgba(88,166,255,0.1); border: 1px solid rgba(88,166,255,0.2); color: #58a6ff; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 8px 12px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6e7681; border-bottom: 1px solid #30363d; }
+    td { padding: 8px 12px; font-size: 12px; border-bottom: 1px solid #21262d; }
+    tr:hover td { background: rgba(255,255,255,0.015); }
+    .bd { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; text-transform: capitalize; }
+    .bd.succeeded { background: rgba(63,185,80,0.15); color: #3fb950; }
+    .bd.pending { background: rgba(210,153,34,0.15); color: #d29922; }
+    .bd.failed { background: rgba(248,81,73,0.15); color: #f85149; }
+    .bd.refunded { background: rgba(139,148,158,0.15); color: #8b949e; }
+    .em { padding: 24px; text-align: center; color: #6e7681; font-size: 13px; }
+    .cd { color: #fff; }
+
+    /* Loading spinner on pay button */
+    .btn .sp { display: none; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.2); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    .btn.load .sp { display: inline-block; }
+    .btn.load .bt { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 600px) {
+      .w { padding: 16px; }
+      .pg { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+<div class="w">
+  <div style="text-align:center;margin-bottom:24px;">
+    <h1 style="font-size:24px;font-weight:700;background:linear-gradient(135deg,#58a6ff,#bc8cff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">💳 GeoMap — Buy Credits</h1>
+    <p style="color:#6e7681;font-size:13px;margin-top:4px;">Enter your token, select a plan, add your card, and pay</p>
+  </div>
+
+  <div class="msg" id="msg"></div>
+
+  <!-- ═══ BEARER TOKEN ═══ -->
+  <div class="tok">
+    <label>🔑 Bearer Token</label>
+    <input type="text" id="tok-in" placeholder="Paste your JWT token here..." spellcheck="false">
+    <span class="ts no" id="tok-st">No token</span>
+    <button class="btn btn-pri btn-sm" id="tok-set">Set Token</button>
+    <button class="btn btn-ghost btn-sm" id="tok-clr">✕ Clear</button>
+  </div>
+
+  <!-- ═══ BALANCE ═══ -->
+  <div class="bal" id="bal">
+    <div>
+      <div class="bal-l">Your Credit Balance</div>
+      <div class="bal-n" id="bal-n">0<span>credits</span></div>
+      <div class="bal-e" id="bal-e"></div>
+    </div>
+    <button class="btn btn-ghost btn-sm" id="bal-rf">🔄 Refresh</button>
+  </div>
+
+  <!-- ═══ PAYMENT SECTION ═══ -->
+  <div class="bx">
+    <div class="bx-t">💳 Select Plan &amp; Pay</div>
+
+    <!-- Package grid -->
+    <div class="pg" id="pg"></div>
+
+    <!-- Custom amount -->
+    <div class="rw">
+      <label>Custom ₹</label>
+      <input type="number" id="cust" min="3" value="99">
+      <span class="cp" id="cp">You get 33 credits</span>
+    </div>
+
+    <!-- Stripe Card Element -->
+    <div style="font-size:12px;color:#8b949e;margin-bottom:6px;">Card details</div>
+    <div class="se-wrap" id="se-wrap">
+      <div id="card-el"></div>
+    </div>
+
+    <!-- Summary -->
+    <div class="summ" id="summ">
+      <div class="summ-r"><span class="summ-l">Plan</span><span class="summ-v" id="summ-plan">Custom</span></div>
+      <div class="summ-r"><span class="summ-l">Amount</span><span class="summ-v" id="summ-amt">₹99</span></div>
+      <div class="summ-r"><span class="summ-l">Credits to receive</span><span class="summ-v gr" id="summ-cr">33</span></div>
+    </div>
+
+    <!-- Pay button -->
+    <button class="btn btn-suc btn-lg" id="pay-btn" disabled>
+      <span class="sp"></span>
+      <span class="bt">💳 Pay</span>
+    </button>
+
+    <div class="rs" id="r"></div>
+  </div>
+
+  <!-- ═══ HISTORY ═══ -->
+  <div class="bx">
+    <div class="bx-t">📋 Payment History</div>
+    <button class="btn btn-ghost btn-sm" id="h-rf" style="margin-bottom:10px;">🔄 Refresh</button>
+    <div id="h"></div>
+  </div>
+
+  <footer style="margin-top:28px;padding-top:16px;border-top:1px solid #21262d;text-align:center;color:#6e7681;font-size:11px;">
+    🔒 Payments secured by Stripe · Test card: <span class="cd">4242 4242 4242 4242</span>
+  </footer>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  const API = '/api/v1', TK = 'geomap_api_token';
+  let tk = localStorage.getItem(TK) || '';
+  let pkg = 'custom';
+  let stripe, card, pkKey = '';
+
+  const P = {
+    starter:  { inr: 150, credits: 50,  label: 'Starter' },
+    popular:  { inr: 300, credits: 110, label: 'Popular' },
+    pro:      { inr: 500, credits: 190, label: 'Pro' },
+    ultimate: { inr: 1000,credits: 400, label: 'Ultimate' },
+  };
+
+  const $ = s => document.querySelector(s);
+  const $$ = s => Array.from(document.querySelectorAll(s));
+
+  function hd(b) {
+    const h = {};
+    if (b) h['Content-Type'] = 'application/json';
+    if (tk) h['Authorization'] = 'Bearer ' + tk;
+    return h;
+  }
+
+  function msg(t, ty) {
+    const e = $('#msg');
+    e.className = 'msg sh ' + (ty || 'in');
+    e.textContent = t;
+    if (ty !== 'in') setTimeout(() => e.classList.remove('sh'), 8000);
+  }
+
+  function show(el, d) {
+    el.className = 'rs sh';
+    el.innerHTML = hl(JSON.stringify(d, null, 2));
+  }
+
+  function hl(j) {
+    return j.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"([^"]+)":/g,'<span class="k">"$1"</span>:')
+      .replace(/: "([^"]*)"/g,': <span class="s">"$1"</span>')
+      .replace(/: (\d+\.?\d*)/g,': <span class="n">$1</span>')
+      .replace(/: (true|false)/g,': <span class="b">$1</span>')
+      .replace(/: (null)/g,': <span class="b">$1</span>');
+  }
+
+  // ── Get current price/credits ────────────────────────────
+  function getPricing() {
+    let amt, cred;
+    if (pkg === 'custom') {
+      amt = Math.max(3, parseInt($('#cust').value) || 0);
+      cred = Math.floor(amt / 3);
+    } else {
+      const info = P[pkg];
+      amt = info ? info.inr : 99;
+      cred = info ? info.credits : Math.floor(amt / 3);
+    }
+    return { amt, cred };
+  }
+
+  function updateUI() {
+    const { amt, cred } = getPricing();
+    $('#cp').textContent = 'You get ' + cred + ' credits';
+    const label = pkg === 'custom' ? 'Custom' : (P[pkg] ? P[pkg].label : pkg);
+    $('#summ-plan').textContent = label;
+    $('#summ-amt').textContent = '₹' + amt;
+    $('#summ-cr').textContent = cred;
+    $('#summ').classList.add('sh');
+    const btn = $('#pay-btn');
+    btn.querySelector('.bt').textContent = '💳 Pay ₹' + amt;
+    // Enable pay button if token and card are ready
+    btn.disabled = !tk || !stripe;
+  }
+
+  // ── Auth ─────────────────────────────────────────────────
+  function upTk() {
+    const i = $('#tok-in'), s = $('#tok-st');
+    i.value = tk;
+    if (!tk) { s.className = 'ts no'; s.textContent = 'No token'; }
+    else {
+      try {
+        const p = JSON.parse(atob(tk.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+        const e = p.exp * 1000;
+        if (e < Date.now()) { s.className = 'ts bad'; s.textContent = 'Expired'; }
+        else {
+          s.className = 'ts ok';
+          const m = Math.round((e - Date.now()) / 60000);
+          s.textContent = m > 60 ? Math.floor(m/60)+'h '+m%60+'m' : m+'m';
+        }
+      } catch(_) { s.className = 'ts bad'; s.textContent = 'Invalid'; }
+    }
+    updateUI();
+  }
+
+  function setTk(t) {
+    tk = t;
+    t ? localStorage.setItem(TK, t) : localStorage.removeItem(TK);
+    upTk();
+    if (t) { ldBal(); ldHist(); }
+  }
+
+  // ── Balance ──────────────────────────────────────────────
+  async function ldBal() {
+    if (!tk) return;
+    try {
+      const r = await fetch(API + '/auth/me', { headers: hd() });
+      const d = await r.json();
+      if (d && d.credits !== undefined) {
+        $('#bal').style.display = 'flex';
+        $('#bal-n').innerHTML = (d.credits || 0) + '<span>credits</span>';
+        $('#bal-e').textContent = d.email || '';
+      }
+    } catch(_) {}
+  }
+
+  // ── History ──────────────────────────────────────────────
+  async function ldHist() {
+    if (!tk) return;
+    try {
+      const r = await fetch(API + '/payments/history', { headers: hd() });
+      const d = await r.json();
+      if (d.success) rHist(d.transactions || []);
+    } catch(_) {}
+  }
+
+  function rHist(t) {
+    const e = $('#h');
+    if (!t.length) { e.innerHTML = '<div class="em">No transactions yet</div>'; return; }
+    e.innerHTML = '<table><thead><tr><th>Date</th><th>Amount</th><th>Credits</th><th>Status</th></tr></thead><tbody>' +
+      t.map(x => {
+        const d = new Date(x.created_at).toLocaleDateString('en-IN', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+        return '<tr><td>'+d+'</td><td>₹'+x.amount_inr+'</td><td><strong>'+x.credits_purchased+'</strong></td><td><span class="bd '+x.status+'">'+x.status+'</span></td></tr>';
+      }).join('') + '</tbody></table>';
+  }
+
+  // ── Packages ─────────────────────────────────────────────
+  function rPkg() {
+    const g = $('#pg');
+    let html = pc('custom', 'Custom', 'Enter amount', '', pkg === 'custom');
+    for (const [name, info] of Object.entries(P)) {
+      const pop = name === 'popular';
+      html += pc(name, info.label, '₹'+info.inr, info.credits+' credits', pkg === name, pop);
+    }
+    g.innerHTML = html;
+    $$('.pb').forEach(e => e.addEventListener('click', () => { pkg = e.dataset.pkg; rPkg(); $('#cust').disabled = pkg !== 'custom'; updateUI(); }));
+    updateUI();
+  }
+
+  function pc(v, l, pr, cr, sel, pop) {
+    return '<div class="pb'+(sel?' sel':'')+(pop?' pop':'')+'" data-pkg="'+v+'">'+
+      '<div class="l">'+l+(pop?' <span class="h">★ BEST VALUE</span>':'')+'</div>'+
+      '<div class="p">'+pr+'</div><div class="c">'+cr+'</div></div>';
+  }
+
+  // ── Stripe Init ──────────────────────────────────────────
+  async function initStripe() {
+    try {
+      const r = await fetch(API + '/payments/config');
+      const d = await r.json();
+      pkKey = d.publishable_key;
+    } catch(_) {
+      // Fallback: use hardcoded key from .env
+      pkKey = 'pk_test_51TnviXQq3KB9Kjbe5aoQ4BsCRzzWU9e6IGxPkUl2RBpAzCsMUZfa4meTzn1g2hqYVYyABI934uZf0AETwWGyJYbH00kuQhziTH';
+    }
+
+    if (!pkKey) { msg('❌ Stripe publishable key not configured', 'er'); return; }
+
+    stripe = Stripe(pkKey);
+    const elements = stripe.elements({ locale: 'en' });
+
+    card = elements.create('cardNumber', {
+      style: {
+        base: {
+          fontSize: '15px', color: '#e6edf3', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+          '::placeholder': { color: '#6e7681' },
+          iconColor: '#58a6ff',
+        },
+        invalid: { color: '#f85149', iconColor: '#f85149' },
+      },
+    });
+    card.mount('#card-el');
+
+    // Also create expiry + cvc fields
+    const expEl = elements.create('cardExpiry', {
+      style: {
+        base: { fontSize: '15px', color: '#e6edf3', '::placeholder': { color: '#6e7681' } },
+        invalid: { color: '#f85149' },
+      },
+    });
+    const cvcEl = elements.create('cardCvc', {
+      style: {
+        base: { fontSize: '15px', color: '#e6edf3', '::placeholder': { color: '#6e7681' } },
+        invalid: { color: '#f85149' },
+      },
+    });
+
+    // Add expiry + cvc next to each other
+    const wrap = $('#se-wrap');
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:10px;margin-top:10px;';
+    const eDiv = document.createElement('div');
+    eDiv.style.cssText = 'flex:1;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px;';
+    eDiv.id = 'exp-el';
+    const cDiv = document.createElement('div');
+    cDiv.style.cssText = 'flex:1;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px;';
+    cDiv.id = 'cvc-el';
+    row.appendChild(eDiv);
+    row.appendChild(cDiv);
+    wrap.appendChild(row);
+
+    expEl.mount('#exp-el');
+    cvcEl.mount('#cvc-el');
+
+    // Listen for card changes
+    card.on('change', (event) => {
+      updateUI();
+      if (event.error) {
+        $('#se-wrap').style.borderColor = '#f85149';
+      } else {
+        $('#se-wrap').style.borderColor = event.complete ? '#3fb950' : '#30363d';
+      }
+    });
+
+    updateUI();
+  }
+
+  // ── Pay ──────────────────────────────────────────────────
+  async function pay() {
+    if (!tk) { msg('Set a Bearer token first', 'er'); return; }
+    if (!stripe || !card) { msg('Stripe not initialized', 'er'); return; }
+
+    const { amt, cred } = getPricing();
+    const btn = $('#pay-btn');
+    btn.disabled = true;
+    btn.classList.add('load');
+
+    try {
+      // Step 1: Create PaymentIntent
+      const r = await fetch(API + '/payments/create-intent', {
+        method: 'POST', headers: hd(true),
+        body: JSON.stringify({ amount_inr: amt, package: pkg }),
+      });
+      const piData = await r.json();
+      if (!r.ok) throw new Error(piData.detail || 'Failed to create intent');
+
+      // Step 2: Confirm card payment with Stripe.js
+      const { error, paymentIntent } = await stripe.confirmCardPayment(piData.client_secret, {
+        payment_method: { card: card },
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (paymentIntent.status === 'succeeded' || paymentIntent.status === 'requires_capture') {
+        // Step 3: Call confirm to allocate credits
+        const confirmR = await fetch(API + '/payments/confirm', {
+          method: 'POST', headers: hd(true),
+          body: JSON.stringify({ payment_intent_id: paymentIntent.id }),
+        });
+        const confirmD = await confirmR.json();
+        if (!confirmR.ok) throw new Error(confirmD.detail || 'Failed to confirm');
+
+        show($('#r'), confirmD);
+        msg('✅ ' + confirmD.credits_added + ' credits added! New balance: ' + confirmD.new_balance, 'ok');
+        ldBal();
+        ldHist();
+      } else {
+        throw new Error('Payment status: ' + paymentIntent.status);
+      }
+
+    } catch(e) {
+      msg('❌ ' + e.message, 'er');
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove('load');
+    }
+  }
+
+  // ── Init ─────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    // Load packages
+    fetch(API + '/payments/packages')
+      .then(r => r.json())
+      .then(d => {
+        if (d.success && d.packages) {
+          for (const p of d.packages) {
+            const key = p.label.toLowerCase();
+            if (P[key]) P[key] = p;
+          }
+        }
+        rPkg();
+      })
+      .catch(() => rPkg());
+
+    // Init Stripe
+    initStripe();
+
+    upTk();
+
+    // Event listeners
+    $('#tok-set').addEventListener('click', () => setTk($('#tok-in').value.trim()));
+    $('#tok-clr').addEventListener('click', () => setTk(''));
+    $('#tok-in').addEventListener('input', upTk);
+    $('#cust').addEventListener('input', updateUI);
+    $('#pay-btn').addEventListener('click', pay);
+    $('#bal-rf').addEventListener('click', () => { ldBal(); ldHist(); });
+    $('#h-rf').addEventListener('click', ldHist);
+
+    if (tk) { ldBal(); ldHist(); }
+  });
+})();
+</script>
+</body>
+</html>

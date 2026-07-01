@@ -4,6 +4,16 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.utils.session_id import validate_uuid4
 
+
+def _reject_float_int(value, field_name: str):
+    """Reject float values for an integer field to prevent silent truncation."""
+    if isinstance(value, float):
+        raise ValueError(
+            f"{field_name} must be a whole number (integer). "
+            f"Decimal values are not supported."
+        )
+    return value
+
 # ---------------------------------------------------------------------------
 # Answer source constants
 # ---------------------------------------------------------------------------
@@ -57,6 +67,11 @@ class PlaceQuestionRequest(BaseModel):
         le=10,
         description="Number of knowledge chunks to retrieve",
     )
+
+    @field_validator("top_k", mode="before")
+    @classmethod
+    def reject_float_top_k(cls, v):
+        return _reject_float_int(v, "top_k")
 
     @field_validator("session_id", mode="before")
     @classmethod

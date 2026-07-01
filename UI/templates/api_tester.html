@@ -101,6 +101,7 @@
     <nav class="sidebar" role="navigation" aria-label="API Section Navigation">
       <div class="sidebar-logo">G</div>
       <div class="sidebar-nav">
+        <a class="sidebar-link" data-scroll-to="payments-section" title="Payments & Credits">💳<span class="tooltip">Payments</span></a>
         <a class="sidebar-link" data-scroll-to="auth-section" title="Authentication">🔐<span class="tooltip">Authentication</span></a>
         <a class="sidebar-link" data-scroll-to="locations-section" title="Locations">📍<span class="tooltip">Locations</span></a>
         <a class="sidebar-link" data-scroll-to="discovery-section" title="Discovery">🔍<span class="tooltip">Discovery</span></a>
@@ -158,6 +159,32 @@
            API SECTIONS
            ════════════════════════════════════════════════════════════ -->
       <div class="api-sections">
+
+        {# ── 0. Payments & Credits ───────────────────────────── #}
+        <article class="api-section" id="payments-section">
+          <header class="api-section-header">
+            <div class="section-icon" style="background:rgba(34,197,94,0.15)">💳</div>
+            <span class="section-title">Payments &amp; Credits</span>
+            <div class="section-meta"><span class="section-endpoint-count">4 endpoints</span></div>
+            <span class="section-chevron">▼</span>
+          </header>
+          <div class="api-section-body">
+            {{ endpoint(method='GET', path='/payments/packages', summary='List credit pricing packages', limit='30/min') }}
+
+            {{ endpoint(method='POST', path='/payments/create-intent', summary='Create PaymentIntent — buy credits', auth=true, limit='10/min',
+              params=[
+                {'name': 'amount_inr', 'type': 'text', 'desc': 'Amount in INR (min ₹3)', 'required': true},
+                {'name': 'package', 'type': 'select', 'options': ['custom', 'starter', 'popular', 'pro', 'ultimate'], 'desc': 'Package name or "custom"'}
+              ],
+              body='{\n  "amount_inr": 150,\n  "package": "starter"\n}') }}
+
+            {{ endpoint(method='POST', path='/payments/confirm', summary='Confirm payment & allocate credits', auth=true, limit='10/min',
+              params=[{'name': 'payment_intent_id', 'type': 'text', 'desc': 'Stripe PI ID (pi_...)', 'required': true}],
+              body='{\n  "payment_intent_id": "pi_..."\n}') }}
+
+            {{ endpoint(method='GET', path='/payments/history', summary='User payment history', auth=true, limit='20/min') }}
+          </div>
+        </article>
 
         {# ── 1. Authentication ─────────────────────────────────── #}
         <article class="api-section" id="auth-section">
